@@ -1,9 +1,12 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co'
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key'
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Only create client if we have valid URLs
+export const supabase = supabaseUrl.includes('placeholder') 
+  ? null 
+  : createClient(supabaseUrl, supabaseAnonKey)
 
 // Database types
 export interface Database {
@@ -37,6 +40,7 @@ export interface Database {
           role: string
           profile: any
           created_at: string
+          updated_at: string
         }
         Insert: {
           id?: string
@@ -45,6 +49,7 @@ export interface Database {
           role: string
           profile?: any
           created_at?: string
+          updated_at?: string
         }
         Update: {
           id?: string
@@ -53,6 +58,7 @@ export interface Database {
           role?: string
           profile?: any
           created_at?: string
+          updated_at?: string
         }
       }
       vehicles: {
@@ -327,6 +333,230 @@ export interface Database {
           file_type?: string | null
           file_size?: number | null
           uploaded_at?: string
+        }
+      }
+      maintenance_providers: {
+        Row: {
+          id: string
+          tenant_id: string
+          user_id: string
+          company_name: string | null
+          certification_number: string | null
+          certification_expiry: string | null
+          specializations: string[] | null
+          contact_phone: string | null
+          contact_email: string | null
+          address: any | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          tenant_id: string
+          user_id: string
+          company_name?: string | null
+          certification_number?: string | null
+          certification_expiry?: string | null
+          specializations?: string[] | null
+          contact_phone?: string | null
+          contact_email?: string | null
+          address?: any | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          tenant_id?: string
+          user_id?: string
+          company_name?: string | null
+          certification_number?: string | null
+          certification_expiry?: string | null
+          specializations?: string[] | null
+          contact_phone?: string | null
+          contact_email?: string | null
+          address?: any | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      driver_hours: {
+        Row: {
+          id: string
+          tenant_id: string
+          driver_id: string
+          date: string
+          driving_hours: number
+          working_hours: number
+          break_hours: number
+          rest_hours: number
+          daily_rest_start: string | null
+          daily_rest_end: string | null
+          weekly_rest_start: string | null
+          weekly_rest_end: string | null
+          compliance_status: string
+          notes: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          tenant_id: string
+          driver_id: string
+          date: string
+          driving_hours?: number
+          working_hours?: number
+          break_hours?: number
+          rest_hours?: number
+          daily_rest_start?: string | null
+          daily_rest_end?: string | null
+          weekly_rest_start?: string | null
+          weekly_rest_end?: string | null
+          compliance_status?: string
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          tenant_id?: string
+          driver_id?: string
+          date?: string
+          driving_hours?: number
+          working_hours?: number
+          break_hours?: number
+          rest_hours?: number
+          daily_rest_start?: string | null
+          daily_rest_end?: string | null
+          weekly_rest_start?: string | null
+          weekly_rest_end?: string | null
+          compliance_status?: string
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      driver_documents: {
+        Row: {
+          id: string
+          tenant_id: string
+          driver_id: string
+          sender_id: string
+          title: string
+          description: string | null
+          document_type: string
+          file_path: string | null
+          file_type: string | null
+          file_size: number | null
+          is_read: boolean
+          read_at: string | null
+          expires_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          tenant_id: string
+          driver_id: string
+          sender_id: string
+          title: string
+          description?: string | null
+          document_type: string
+          file_path?: string | null
+          file_type?: string | null
+          file_size?: number | null
+          is_read?: boolean
+          read_at?: string | null
+          expires_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          tenant_id?: string
+          driver_id?: string
+          sender_id?: string
+          title?: string
+          description?: string | null
+          document_type?: string
+          file_path?: string | null
+          file_type?: string | null
+          file_size?: number | null
+          is_read?: boolean
+          read_at?: string | null
+          expires_at?: string | null
+          created_at?: string
+        }
+      }
+      accident_reports: {
+        Row: {
+          id: string
+          tenant_id: string
+          driver_id: string
+          vehicle_id: string
+          accident_date: string
+          location: any
+          accident_type: string
+          severity: string
+          description: string
+          injuries_involved: boolean
+          injuries_description: string | null
+          emergency_services_called: boolean
+          police_report_number: string | null
+          insurance_claim_number: string | null
+          photos: any | null
+          witness_details: any | null
+          weather_conditions: string | null
+          road_conditions: string | null
+          estimated_damage_cost: number | null
+          status: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          tenant_id: string
+          driver_id: string
+          vehicle_id: string
+          accident_date: string
+          location: any
+          accident_type: string
+          severity: string
+          description: string
+          injuries_involved?: boolean
+          injuries_description?: string | null
+          emergency_services_called?: boolean
+          police_report_number?: string | null
+          insurance_claim_number?: string | null
+          photos?: any | null
+          witness_details?: any | null
+          weather_conditions?: string | null
+          road_conditions?: string | null
+          estimated_damage_cost?: number | null
+          status?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          tenant_id?: string
+          driver_id?: string
+          vehicle_id?: string
+          accident_date?: string
+          location?: any
+          accident_type?: string
+          severity?: string
+          description?: string
+          injuries_involved?: boolean
+          injuries_description?: string | null
+          emergency_services_called?: boolean
+          police_report_number?: string | null
+          insurance_claim_number?: string | null
+          photos?: any | null
+          witness_details?: any | null
+          weather_conditions?: string | null
+          road_conditions?: string | null
+          estimated_damage_cost?: number | null
+          status?: string
+          created_at?: string
+          updated_at?: string
         }
       }
     }

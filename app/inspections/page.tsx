@@ -5,6 +5,10 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { getOrCreateTenantId } from '@/lib/tenant'
 import { User } from '@supabase/supabase-js'
+import InspectionCalendar from '@/components/InspectionCalendar'
+import DayViewModal from '@/components/DayViewModal'
+import OverdueInspectionsModal from '@/components/OverdueInspectionsModal'
+import { maintainRecurringSchedules, createRecurringSchedules } from '@/lib/scheduling'
 
 interface Vehicle {
   id: string
@@ -117,6 +121,10 @@ export default function InspectionsPage() {
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar')
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
   const [error, setError] = useState<string | null>(null)
+  const [tenantId, setTenantId] = useState<string | null>(null)
+  const [showDayViewModal, setShowDayViewModal] = useState(false)
+  const [selectedDayDate, setSelectedDayDate] = useState<string | null>(null)
+  const [showOverdueModal, setShowOverdueModal] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
   const [showProviderModal, setShowProviderModal] = useState(false)
   const [selectedDaySchedules, setSelectedDaySchedules] = useState<InspectionSchedule[]>([])
@@ -163,18 +171,19 @@ export default function InspectionsPage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session?.user) return
 
-      const tenantId = await getOrCreateTenantId()
-      if (!tenantId) {
+      const tenantIdResult = await getOrCreateTenantId()
+      if (!tenantIdResult) {
         console.error('Failed to get tenant ID')
         setError('Failed to get tenant ID')
         return
       }
+      setTenantId(tenantIdResult)
 
       // Fetch vehicles
       const { data: vehiclesData, error: vehiclesError } = await supabase
         .from('vehicles')
         .select('id, registration, make, model, year')
-        .eq('tenant_id', tenantId)
+        .eq('tenant_id', tenantIdResult)
         .order('registration')
 
       if (vehiclesError) {
@@ -188,7 +197,7 @@ export default function InspectionsPage() {
       const { data: providersData, error: providersError } = await supabase
         .from('maintenance_providers')
         .select('*')
-        .eq('tenant_id', tenantId)
+        .eq('tenant_id', tenantIdResult)
         .eq('is_active', true)
         .order('name')
 
@@ -217,7 +226,7 @@ export default function InspectionsPage() {
           vehicles!inner(id, registration, make, model, year),
           maintenance_providers(id, name, contact_person, phone)
         `)
-        .eq('tenant_id', tenantId)
+        .eq('tenant_id', tenantIdResult)
         .eq('is_active', true)
         .order('scheduled_date', { ascending: true })
 
@@ -246,7 +255,7 @@ export default function InspectionsPage() {
           inspection_date,
           vehicles!inner(id, registration, make, model, year)
         `)
-        .eq('vehicles.tenant_id', tenantId)
+        .eq('vehicles.tenant_id', tenantIdResult)
         .order('next_inspection_due', { ascending: true })
 
       if (inspectionsError) {
@@ -265,12 +274,130 @@ export default function InspectionsPage() {
       setError('Failed to load inspection data')
     } finally {
       setLoading(false)
+      // Maintain recurring schedules after initial data load
+      if (tenantId) {
+        setTimeout(() => maintainSchedules(), 1000) // Delay to avoid blocking UI
+      }
     }
   }
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.push('/')
+  }
+
+  // Calendar handlers
+  const handleCalendarRefresh = () => {
+    fetchData()
+  }
+
+  // Maintain recurring schedules
+  const maintainSchedules = async () => {
+    if (!tenantId) return
+
+    try {
+      console.log('Maintaining recurring schedules...')
+      const result = await maintainRecurringSchedules(tenantId)
+      
+      if (result.success && result.processed > 0) {
+        console.log(`Maintained ${result.processed} recurring schedules`)
+        // Refresh data to show new schedules
+        fetchData()
+      }
+    } catch (error) {
+      console.error('Error maintaining recurring schedules:', error)
+    }
+  }
+
+  // Manual test function for S15VJM
+  const testS15VJMScheduling = async () => {
+    if (!tenantId) return
+
+    try {
+      console.log('Testing S15VJM scheduling...')
+      console.log('Available vehicles:', vehicles.map(v => ({ id: v.id, registration: v.registration })))
+      
+      // Find the S15VJM vehicle (case insensitive)
+      const s15vjmVehicle = vehicles.find(v => 
+        v.registration.toLowerCase() === 's15vjm' || 
+        v.registration.toLowerCase() === 's15 vjm' ||
+        v.registration === 'S15VJM' ||
+        v.registration === 'S15 VJM'
+      )
+      
+      if (!s15vjmVehicle) {
+        console.log('S15VJM vehicle not found. Available vehicles:', vehicles)
+        alert(`S15VJM vehicle not found. Available vehicles: ${vehicles.map(v => v.registration).join(', ')}`)
+        return
+      }
+
+      console.log('Found S15VJM vehicle:', s15vjmVehicle)
+
+      // Create recurring schedules for S15VJM safety inspection
+      const result = await createRecurringSchedules({
+        tenant_id: tenantId,
+        vehicle_id: s15vjmVehicle.id,
+        inspection_type: 'safety_inspection',
+        start_date: '2025-10-04',
+        frequency_weeks: 8,
+        notes: 'Automatic recurring schedule',
+        max_future_schedules: Math.ceil(52 / 8) // Create schedules for 52 weeks (8-week frequency = 7 schedules)
+      })
+
+      if (result.success) {
+        alert(`Successfully created ${result.created} recurring schedules for S15VJM`)
+        fetchData() // Refresh to show new schedules
+      } else {
+        alert(`Failed to create schedules: ${result.errors.join(', ')}`)
+      }
+    } catch (error) {
+      console.error('Error testing S15VJM scheduling:', error)
+      alert('Error testing scheduling')
+    }
+  }
+
+  // General test function for any vehicle with existing schedules
+  const testGeneralScheduling = async () => {
+    if (!tenantId) return
+
+    try {
+      console.log('Testing general scheduling...')
+      
+      // Find any vehicle that has existing schedules
+      const vehicleWithSchedules = schedules.find(schedule => {
+        const vehicle = vehicles.find(v => v.id === schedule.vehicle_id)
+        return vehicle && schedule.frequency_weeks > 0
+      })
+      
+      if (!vehicleWithSchedules) {
+        alert('No vehicles with existing schedules found')
+        return
+      }
+      
+      const vehicle = vehicles.find(v => v.id === vehicleWithSchedules.vehicle_id)
+      console.log('Testing scheduling for vehicle:', vehicle?.registration)
+      
+      // Create recurring schedules for this vehicle
+      const result = await createRecurringSchedules({
+        tenant_id: tenantId,
+        vehicle_id: vehicleWithSchedules.vehicle_id,
+        inspection_type: vehicleWithSchedules.inspection_type,
+        start_date: vehicleWithSchedules.scheduled_date,
+        frequency_weeks: vehicleWithSchedules.frequency_weeks,
+        notes: 'Automatic recurring schedule test',
+        max_future_schedules: Math.ceil(52 / vehicleWithSchedules.frequency_weeks) // Create schedules for 52 weeks
+      })
+
+      if (result.success) {
+        alert(`Successfully created ${result.created} recurring schedules for ${vehicle?.registration}`)
+        fetchData() // Refresh to show new schedules
+      } else {
+        alert(`Failed to create schedules: ${result.errors.join(', ')}`)
+      }
+    } catch (error) {
+      console.error('Error testing general scheduling:', error)
+      alert('Error testing scheduling')
+    }
   }
 
   const formatDate = (dateString: string) => {
@@ -455,7 +582,10 @@ export default function InspectionsPage() {
           </div>
 
           {/* Overdue Inspections */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div 
+            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
+            onClick={() => setShowOverdueModal(true)}
+          >
             <div className="flex items-center">
               <div className="flex-shrink-0">
                 <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
@@ -467,6 +597,7 @@ export default function InspectionsPage() {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Overdue</p>
                 <p className="text-2xl font-semibold text-gray-900">{calculateStats().overdueScheduled}</p>
+                <p className="text-xs text-gray-500 mt-1">Click to view details</p>
               </div>
             </div>
           </div>
@@ -486,6 +617,28 @@ export default function InspectionsPage() {
                 <p className="text-2xl font-semibold text-gray-900">{calculateStats().thisWeekScheduled}</p>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Debug/Test Section */}
+        <div className="mb-6">
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <h3 className="text-sm font-medium text-yellow-800 mb-2">Debug: Test S15VJM Scheduling</h3>
+            <p className="text-xs text-yellow-700 mb-3">
+              Click this button to manually test the recurring schedule creation for S15VJM safety inspection (8-week frequency)
+            </p>
+            <button
+              onClick={testS15VJMScheduling}
+              className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-sm"
+            >
+              Test S15VJM Scheduling
+            </button>
+            <button
+              onClick={testGeneralScheduling}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm ml-2"
+            >
+              Test Any Vehicle
+            </button>
           </div>
         </div>
 
@@ -535,6 +688,46 @@ export default function InspectionsPage() {
             </button>
           </div>
         </div>
+
+        {/* Calendar View */}
+        {viewMode === 'calendar' && tenantId && (
+          <InspectionCalendar
+            tenantId={tenantId}
+            onDateClick={(date) => {
+              setSelectedDayDate(date)
+              setShowDayViewModal(true)
+            }}
+            onEventClick={(event) => {
+              console.log('Event clicked:', event)
+              // Handle event click if needed
+            }}
+          />
+        )}
+
+        {/* Day View Modal */}
+        {showDayViewModal && selectedDayDate && tenantId && (
+          <DayViewModal
+            isOpen={showDayViewModal}
+            onClose={() => {
+              setShowDayViewModal(false)
+              setSelectedDayDate(null)
+            }}
+            date={selectedDayDate}
+            events={[]} // The calendar component will handle fetching events
+            tenantId={tenantId}
+            onEventUpdate={handleCalendarRefresh}
+          />
+        )}
+
+        {/* Overdue Inspections Modal */}
+        {showOverdueModal && tenantId && (
+          <OverdueInspectionsModal
+            isOpen={showOverdueModal}
+            onClose={() => setShowOverdueModal(false)}
+            tenantId={tenantId}
+            onInspectionUpdate={handleCalendarRefresh}
+          />
+        )}
 
         {/* List View */}
         {viewMode === 'list' && (
@@ -874,7 +1067,7 @@ function EditInspectionForm({
         .from('inspection_schedules')
         .update(updateData)
         .eq('id', inspection.id)
-        .eq('tenant_id', tenantId)
+        .eq('tenant_id', tenantIdResult)
 
       if (updateError) {
         throw updateError
@@ -1311,7 +1504,7 @@ function ProviderManagementModal({
         .from('maintenance_providers')
         .delete()
         .eq('id', providerId)
-        .eq('tenant_id', tenantId)
+        .eq('tenant_id', tenantIdResult)
 
       if (error) {
         throw error
@@ -1335,7 +1528,7 @@ function ProviderManagementModal({
         .from('maintenance_providers')
         .update({ is_active: !provider.is_active })
         .eq('id', provider.id)
-        .eq('tenant_id', tenantId)
+        .eq('tenant_id', tenantIdResult)
 
       if (error) {
         throw error
@@ -1518,7 +1711,7 @@ function AddEditProviderModal({
           .from('maintenance_providers')
           .update(providerData)
           .eq('id', provider.id)
-          .eq('tenant_id', tenantId)
+          .eq('tenant_id', tenantIdResult)
 
         if (updateError) {
           throw updateError
