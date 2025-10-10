@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { getOrCreateTenantId } from '@/lib/tenant'
 import { User } from '@supabase/supabase-js'
+import VehicleDocumentsModal from '@/components/VehicleDocumentsModal'
+import VehicleDefectsModal from '@/components/VehicleDefectsModal'
 
 interface Vehicle {
   id: string
@@ -18,6 +20,9 @@ interface Vehicle {
   fuel_type: string
   status: 'available' | 'in_use' | 'maintenance' | 'out_of_service'
   current_location?: any
+  tax_due_date?: string
+  mot_due_date?: string
+  tacho_expiry_date?: string
   created_at: string
   updated_at: string
 }
@@ -29,6 +34,10 @@ export default function VehiclesPage() {
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showDocumentsModal, setShowDocumentsModal] = useState(false)
+  const [selectedVehicleForDocuments, setSelectedVehicleForDocuments] = useState<Vehicle | null>(null)
+  const [showDefectsModal, setShowDefectsModal] = useState(false)
+  const [selectedVehicleForDefects, setSelectedVehicleForDefects] = useState<Vehicle | null>(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -275,6 +284,9 @@ export default function VehiclesPage() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Year</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fuel Type</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tax Due</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">MOT Due</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tacho Expiry</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
@@ -308,8 +320,65 @@ export default function VehiclesPage() {
                           {vehicle.status.replace('_', ' ')}
                         </span>
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {vehicle.tax_due_date ? (
+                          <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                            new Date(vehicle.tax_due_date) <= new Date() ? 'bg-red-100 text-red-800' :
+                            new Date(vehicle.tax_due_date) <= new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-green-100 text-green-800'
+                          }`}>
+                            {new Date(vehicle.tax_due_date).toLocaleDateString()}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">Not set</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {vehicle.mot_due_date ? (
+                          <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                            new Date(vehicle.mot_due_date) <= new Date() ? 'bg-red-100 text-red-800' :
+                            new Date(vehicle.mot_due_date) <= new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-green-100 text-green-800'
+                          }`}>
+                            {new Date(vehicle.mot_due_date).toLocaleDateString()}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">Not set</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {vehicle.tacho_expiry_date ? (
+                          <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                            new Date(vehicle.tacho_expiry_date) <= new Date() ? 'bg-red-100 text-red-800' :
+                            new Date(vehicle.tacho_expiry_date) <= new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-green-100 text-green-800'
+                          }`}>
+                            {new Date(vehicle.tacho_expiry_date).toLocaleDateString()}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">Not set</span>
+                        )}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div className="flex space-x-2">
+                          <button
+                            onClick={() => {
+                              setSelectedVehicleForDocuments(vehicle)
+                              setShowDocumentsModal(true)
+                            }}
+                            className="text-green-600 hover:text-green-900"
+                          >
+                            Documents
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedVehicleForDefects(vehicle)
+                              setShowDefectsModal(true)
+                            }}
+                            className="text-orange-600 hover:text-orange-900"
+                          >
+                            Defects
+                          </button>
                           <button
                             onClick={() => setEditingVehicle(vehicle)}
                             className="text-blue-600 hover:text-blue-900"
@@ -355,6 +424,30 @@ export default function VehiclesPage() {
           }}
         />
       )}
+
+      {/* Vehicle Documents Modal */}
+      {showDocumentsModal && selectedVehicleForDocuments && (
+        <VehicleDocumentsModal
+          isOpen={showDocumentsModal}
+          onClose={() => {
+            setShowDocumentsModal(false)
+            setSelectedVehicleForDocuments(null)
+          }}
+          vehicle={selectedVehicleForDocuments}
+        />
+      )}
+
+      {/* Vehicle Defects Modal */}
+      {showDefectsModal && selectedVehicleForDefects && (
+        <VehicleDefectsModal
+          isOpen={showDefectsModal}
+          onClose={() => {
+            setShowDefectsModal(false)
+            setSelectedVehicleForDefects(null)
+          }}
+          vehicle={selectedVehicleForDefects}
+        />
+      )}
     </div>
   )
 }
@@ -379,7 +472,10 @@ function AddVehicleModal({ onClose, onSuccess }: { onClose: () => void; onSucces
     current_location: {
       lat: '',
       lng: ''
-    }
+    },
+    tax_due_date: '',
+    mot_due_date: '',
+    tacho_expiry_date: ''
   })
   const [vehicleTypes, setVehicleTypes] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -508,7 +604,10 @@ function AddVehicleModal({ onClose, onSuccess }: { onClose: () => void; onSucces
         status: formData.status,
         dimensions: dimensions,
         adr_classifications: formData.adr_classifications,
-        current_location: currentLocation
+        current_location: currentLocation,
+        tax_due_date: formData.tax_due_date || null,
+        mot_due_date: formData.mot_due_date || null,
+        tacho_expiry_date: formData.tacho_expiry_date || null
       }
 
       console.log('Attempting to insert vehicle data:', vehicleData)
@@ -666,6 +765,36 @@ function AddVehicleModal({ onClose, onSuccess }: { onClose: () => void; onSucces
                   <option value="maintenance">Maintenance</option>
                   <option value="out_of_service">Out of Service</option>
                 </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tax Due Date</label>
+                <input
+                  type="date"
+                  value={formData.tax_due_date}
+                  onChange={(e) => setFormData({ ...formData, tax_due_date: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">MOT Due Date</label>
+                <input
+                  type="date"
+                  value={formData.mot_due_date}
+                  onChange={(e) => setFormData({ ...formData, mot_due_date: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tacho Calibration Expiry Date</label>
+                <input
+                  type="date"
+                  value={formData.tacho_expiry_date}
+                  onChange={(e) => setFormData({ ...formData, tacho_expiry_date: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
               </div>
             </div>
           </div>
@@ -858,7 +987,10 @@ function EditVehicleModal({ vehicle, onClose, onSuccess }: { vehicle: Vehicle; o
     current_location: {
       lat: vehicle.current_location?.coordinates?.[1]?.toString() || '',
       lng: vehicle.current_location?.coordinates?.[0]?.toString() || ''
-    }
+    },
+    tax_due_date: vehicle.tax_due_date || '',
+    mot_due_date: vehicle.mot_due_date || '',
+    tacho_expiry_date: vehicle.tacho_expiry_date || ''
   })
   const [vehicleTypes, setVehicleTypes] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -930,7 +1062,10 @@ function EditVehicleModal({ vehicle, onClose, onSuccess }: { vehicle: Vehicle; o
           status: formData.status,
           dimensions: dimensions,
           adr_classifications: formData.adr_classifications,
-          current_location: currentLocation
+          current_location: currentLocation,
+          tax_due_date: formData.tax_due_date || null,
+          mot_due_date: formData.mot_due_date || null,
+          tacho_expiry_date: formData.tacho_expiry_date || null
         })
         .eq('id', vehicle.id)
 
@@ -1074,6 +1209,36 @@ function EditVehicleModal({ vehicle, onClose, onSuccess }: { vehicle: Vehicle; o
                   <option value="maintenance">Maintenance</option>
                   <option value="out_of_service">Out of Service</option>
                 </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tax Due Date</label>
+                <input
+                  type="date"
+                  value={formData.tax_due_date}
+                  onChange={(e) => setFormData({ ...formData, tax_due_date: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">MOT Due Date</label>
+                <input
+                  type="date"
+                  value={formData.mot_due_date}
+                  onChange={(e) => setFormData({ ...formData, mot_due_date: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Tacho Calibration Expiry Date</label>
+                <input
+                  type="date"
+                  value={formData.tacho_expiry_date}
+                  onChange={(e) => setFormData({ ...formData, tacho_expiry_date: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
               </div>
             </div>
           </div>

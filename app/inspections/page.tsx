@@ -8,6 +8,10 @@ import { User } from '@supabase/supabase-js'
 import InspectionCalendar from '@/components/InspectionCalendar'
 import DayViewModal from '@/components/DayViewModal'
 import OverdueInspectionsModal from '@/components/OverdueInspectionsModal'
+import InspectionCompletionModal from '@/components/InspectionCompletionModal'
+import GlobalDefectsModal from '@/components/GlobalDefectsModal'
+import BrakeTestUploadForm from '@/components/BrakeTestUploadForm'
+import TachoCalibrationUploadForm from '@/components/TachoCalibrationUploadForm'
 import { maintainRecurringSchedules, createRecurringSchedules } from '@/lib/scheduling'
 
 interface Vehicle {
@@ -44,7 +48,7 @@ interface InspectionSchedule {
   id: string
   vehicle_id: string
   maintenance_provider_id?: string
-  inspection_type: 'safety_inspection' | 'tax' | 'mot' | 'tacho_calibration'
+  inspection_type: 'safety_inspection' | 'tacho_calibration'
   scheduled_date: string
   frequency_weeks: number
   notes?: string
@@ -55,7 +59,7 @@ interface InspectionSchedule {
 }
 
 interface InspectionType {
-  value: 'safety_inspection' | 'tax' | 'mot' | 'tacho_calibration'
+  value: 'safety_inspection' | 'tacho_calibration'
   label: string
   defaultFrequency: number
   description: string
@@ -79,18 +83,6 @@ const inspectionTypes: InspectionType[] = [
     label: 'Safety Inspection',
     defaultFrequency: 26,
     description: 'Regular safety inspection as per DVSA requirements'
-  },
-  {
-    value: 'tax',
-    label: 'Vehicle Tax',
-    defaultFrequency: 52,
-    description: 'Annual vehicle tax renewal'
-  },
-  {
-    value: 'mot',
-    label: 'MOT Test',
-    defaultFrequency: 52,
-    description: 'Annual MOT test for vehicles over 3 years old'
   },
   {
     value: 'tacho_calibration',
@@ -132,6 +124,12 @@ export default function InspectionsPage() {
   const [selectedInspection, setSelectedInspection] = useState<InspectionSchedule | null>(null)
   const [showInspectionModal, setShowInspectionModal] = useState(false)
   const [isEditingInspection, setIsEditingInspection] = useState(false)
+  const [showCompletionModal, setShowCompletionModal] = useState(false)
+  const [selectedScheduleForCompletion, setSelectedScheduleForCompletion] = useState<InspectionSchedule | null>(null)
+  const [showDefectsModal, setShowDefectsModal] = useState(false)
+  const [openDefectsCount, setOpenDefectsCount] = useState(0)
+  const [showBrakeTestModal, setShowBrakeTestModal] = useState(false)
+  const [showTachoCalibrationModal, setShowTachoCalibrationModal] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -269,6 +267,9 @@ export default function InspectionsPage() {
         setInspections(formattedInspections)
       }
 
+      // Fetch open defects count
+      await fetchOpenDefectsCount()
+
     } catch (error) {
       console.error('Error fetching data:', error)
       setError('Failed to load inspection data')
@@ -291,16 +292,46 @@ export default function InspectionsPage() {
     fetchData()
   }
 
+  const handleCompleteInspection = (schedule: InspectionSchedule) => {
+    // Find the full schedule data from our schedules array
+    const fullSchedule = schedules.find(s => s.id === schedule.id)
+    if (fullSchedule) {
+      setSelectedScheduleForCompletion(fullSchedule)
+      setShowCompletionModal(true)
+    }
+  }
+
+  const fetchOpenDefectsCount = async () => {
+    try {
+      const tenantId = await getOrCreateTenantId()
+      if (!tenantId) return
+
+      const { count, error } = await supabase
+        .from('vehicle_defects')
+        .select('*', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .in('status', ['open', 'in_progress'])
+        .eq('is_active', true)
+
+      if (error) {
+        console.error('Error fetching defects count:', error)
+        return
+      }
+
+      setOpenDefectsCount(count || 0)
+    } catch (err) {
+      console.error('Error fetching defects count:', err)
+    }
+  }
+
   // Maintain recurring schedules
   const maintainSchedules = async () => {
     if (!tenantId) return
 
     try {
-      console.log('Maintaining recurring schedules...')
       const result = await maintainRecurringSchedules(tenantId)
       
       if (result.success && result.processed > 0) {
-        console.log(`Maintained ${result.processed} recurring schedules`)
         // Refresh data to show new schedules
         fetchData()
       }
@@ -309,96 +340,6 @@ export default function InspectionsPage() {
     }
   }
 
-  // Manual test function for S15VJM
-  const testS15VJMScheduling = async () => {
-    if (!tenantId) return
-
-    try {
-      console.log('Testing S15VJM scheduling...')
-      console.log('Available vehicles:', vehicles.map(v => ({ id: v.id, registration: v.registration })))
-      
-      // Find the S15VJM vehicle (case insensitive)
-      const s15vjmVehicle = vehicles.find(v => 
-        v.registration.toLowerCase() === 's15vjm' || 
-        v.registration.toLowerCase() === 's15 vjm' ||
-        v.registration === 'S15VJM' ||
-        v.registration === 'S15 VJM'
-      )
-      
-      if (!s15vjmVehicle) {
-        console.log('S15VJM vehicle not found. Available vehicles:', vehicles)
-        alert(`S15VJM vehicle not found. Available vehicles: ${vehicles.map(v => v.registration).join(', ')}`)
-        return
-      }
-
-      console.log('Found S15VJM vehicle:', s15vjmVehicle)
-
-      // Create recurring schedules for S15VJM safety inspection
-      const result = await createRecurringSchedules({
-        tenant_id: tenantId,
-        vehicle_id: s15vjmVehicle.id,
-        inspection_type: 'safety_inspection',
-        start_date: '2025-10-04',
-        frequency_weeks: 8,
-        notes: 'Automatic recurring schedule',
-        max_future_schedules: Math.ceil(52 / 8) // Create schedules for 52 weeks (8-week frequency = 7 schedules)
-      })
-
-      if (result.success) {
-        alert(`Successfully created ${result.created} recurring schedules for S15VJM`)
-        fetchData() // Refresh to show new schedules
-      } else {
-        alert(`Failed to create schedules: ${result.errors.join(', ')}`)
-      }
-    } catch (error) {
-      console.error('Error testing S15VJM scheduling:', error)
-      alert('Error testing scheduling')
-    }
-  }
-
-  // General test function for any vehicle with existing schedules
-  const testGeneralScheduling = async () => {
-    if (!tenantId) return
-
-    try {
-      console.log('Testing general scheduling...')
-      
-      // Find any vehicle that has existing schedules
-      const vehicleWithSchedules = schedules.find(schedule => {
-        const vehicle = vehicles.find(v => v.id === schedule.vehicle_id)
-        return vehicle && schedule.frequency_weeks > 0
-      })
-      
-      if (!vehicleWithSchedules) {
-        alert('No vehicles with existing schedules found')
-        return
-      }
-      
-      const vehicle = vehicles.find(v => v.id === vehicleWithSchedules.vehicle_id)
-      console.log('Testing scheduling for vehicle:', vehicle?.registration)
-      
-      // Create recurring schedules for this vehicle
-      const result = await createRecurringSchedules({
-        tenant_id: tenantId,
-        vehicle_id: vehicleWithSchedules.vehicle_id,
-        inspection_type: vehicleWithSchedules.inspection_type,
-        start_date: vehicleWithSchedules.scheduled_date,
-        frequency_weeks: vehicleWithSchedules.frequency_weeks,
-        notes: 'Automatic recurring schedule test',
-        max_future_schedules: Math.ceil(52 / vehicleWithSchedules.frequency_weeks) // Create schedules for 52 weeks
-      })
-
-      if (result.success) {
-        alert(`Successfully created ${result.created} recurring schedules for ${vehicle?.registration}`)
-        fetchData() // Refresh to show new schedules
-      } else {
-        alert(`Failed to create schedules: ${result.errors.join(', ')}`)
-      }
-    } catch (error) {
-      console.error('Error testing general scheduling:', error)
-      alert('Error testing scheduling')
-    }
-  }
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-GB', {
@@ -488,6 +429,22 @@ export default function InspectionsPage() {
             </div>
             
             <div className="flex items-center space-x-4">
+              {/* Defects Icon */}
+              <button
+                onClick={() => setShowDefectsModal(true)}
+                className="relative p-2 text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                title="View Open Defects"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+                {openDefectsCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-medium">
+                    {openDefectsCount > 99 ? '99+' : openDefectsCount}
+                  </span>
+                )}
+              </button>
+
               {/* User Profile */}
               <div className="flex items-center space-x-3">
                 <div className="text-right">
@@ -514,36 +471,6 @@ export default function InspectionsPage() {
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Overview Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Inspections</p>
-                <p className="text-3xl font-bold text-gray-900 mt-2">{stats.totalInspections}</p>
-              </div>
-              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Scheduled Inspections</p>
-                <p className="text-3xl font-bold text-purple-600 mt-2">{stats.totalScheduled}</p>
-              </div>
-              <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-              </div>
-            </div>
-          </div>
-        </div>
 
         {/* Inspection Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -560,23 +487,6 @@ export default function InspectionsPage() {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Total Scheduled</p>
                 <p className="text-2xl font-semibold text-gray-900">{calculateStats().totalScheduled}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Upcoming Inspections */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <div className="flex items-center">
-              <div className="flex-shrink-0">
-                <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                  <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Upcoming</p>
-                <p className="text-2xl font-semibold text-gray-900">{calculateStats().upcomingScheduled}</p>
               </div>
             </div>
           </div>
@@ -602,6 +512,23 @@ export default function InspectionsPage() {
             </div>
           </div>
 
+          {/* Completed Inspections */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                  <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Completed</p>
+                <p className="text-2xl font-semibold text-gray-900">{calculateStats().completedInspections}</p>
+              </div>
+            </div>
+          </div>
+
           {/* This Week Inspections */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <div className="flex items-center">
@@ -620,26 +547,26 @@ export default function InspectionsPage() {
           </div>
         </div>
 
-        {/* Debug/Test Section */}
-        <div className="mb-6">
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <h3 className="text-sm font-medium text-yellow-800 mb-2">Debug: Test S15VJM Scheduling</h3>
-            <p className="text-xs text-yellow-700 mb-3">
-              Click this button to manually test the recurring schedule creation for S15VJM safety inspection (8-week frequency)
-            </p>
-            <button
-              onClick={testS15VJMScheduling}
-              className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-sm"
-            >
-              Test S15VJM Scheduling
-            </button>
-            <button
-              onClick={testGeneralScheduling}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm ml-2"
-            >
-              Test Any Vehicle
-            </button>
-          </div>
+        {/* Upload Actions */}
+        <div className="flex items-center justify-center space-x-4 mb-8">
+          <button
+            onClick={() => setShowBrakeTestModal(true)}
+            className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+          >
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            Upload Brake Test
+          </button>
+          <button
+            onClick={() => setShowTachoCalibrationModal(true)}
+            className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors"
+          >
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+            Upload Tacho Calibration
+          </button>
         </div>
 
         {/* View Mode Toggle and Action Buttons */}
@@ -698,34 +625,9 @@ export default function InspectionsPage() {
               setShowDayViewModal(true)
             }}
             onEventClick={(event) => {
-              console.log('Event clicked:', event)
               // Handle event click if needed
             }}
-          />
-        )}
-
-        {/* Day View Modal */}
-        {showDayViewModal && selectedDayDate && tenantId && (
-          <DayViewModal
-            isOpen={showDayViewModal}
-            onClose={() => {
-              setShowDayViewModal(false)
-              setSelectedDayDate(null)
-            }}
-            date={selectedDayDate}
-            events={[]} // The calendar component will handle fetching events
-            tenantId={tenantId}
-            onEventUpdate={handleCalendarRefresh}
-          />
-        )}
-
-        {/* Overdue Inspections Modal */}
-        {showOverdueModal && tenantId && (
-          <OverdueInspectionsModal
-            isOpen={showOverdueModal}
-            onClose={() => setShowOverdueModal(false)}
-            tenantId={tenantId}
-            onInspectionUpdate={handleCalendarRefresh}
+            onCompleteInspection={handleCompleteInspection}
           />
         )}
 
@@ -745,7 +647,6 @@ export default function InspectionsPage() {
                       onClick={(e) => {
                         e.preventDefault()
                         e.stopPropagation()
-                        console.log('List view inspection clicked:', schedule)
                         setSelectedInspection(schedule)
                         setShowInspectionModal(true)
                         setIsEditingInspection(false)
@@ -788,6 +689,16 @@ export default function InspectionsPage() {
                               : 'Upcoming'
                             }
                           </span>
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              handleCompleteInspection(schedule)
+                            }}
+                            className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                          >
+                            Complete
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -795,6 +706,145 @@ export default function InspectionsPage() {
                 </div>
               </div>
             )}
+
+            {/* No Inspections Message */}
+            {schedules.length === 0 && (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
+                <svg className="w-12 h-12 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">No Scheduled Inspections</h3>
+                <p className="text-gray-500 mb-4">Get started by scheduling your first inspection.</p>
+                <button
+                  onClick={() => setShowAddModal(true)}
+                  className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  Schedule Inspection
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Day View Modal */}
+        {showDayViewModal && selectedDayDate && tenantId && (
+          <DayViewModal
+            isOpen={showDayViewModal}
+            onClose={() => {
+              setShowDayViewModal(false)
+              setSelectedDayDate(null)
+            }}
+            date={selectedDayDate}
+            events={[]} // The calendar component will handle fetching events
+            tenantId={tenantId}
+            onEventUpdate={handleCalendarRefresh}
+          />
+        )}
+
+        {/* Overdue Inspections Modal */}
+        {showOverdueModal && tenantId && (
+          <OverdueInspectionsModal
+            isOpen={showOverdueModal}
+            onClose={() => setShowOverdueModal(false)}
+            tenantId={tenantId}
+            onInspectionUpdate={handleCalendarRefresh}
+          />
+        )}
+
+        {/* Inspection Completion Modal */}
+        {showCompletionModal && selectedScheduleForCompletion && (
+          <InspectionCompletionModal
+            isOpen={showCompletionModal}
+            onClose={() => {
+              setShowCompletionModal(false)
+              setSelectedScheduleForCompletion(null)
+            }}
+            onSuccess={() => {
+              setShowCompletionModal(false)
+              setSelectedScheduleForCompletion(null)
+              fetchData()
+            }}
+            inspection={selectedScheduleForCompletion}
+          />
+        )}
+
+        {/* Global Defects Modal */}
+        <GlobalDefectsModal
+          isOpen={showDefectsModal}
+          onClose={() => setShowDefectsModal(false)}
+          onDefectCompleted={() => {
+            fetchOpenDefectsCount()
+          }}
+        />
+
+        {/* Brake Test Upload Modal */}
+        {showBrakeTestModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+              <div className="p-6 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900">Upload Brake Test</h2>
+                    <p className="text-sm text-gray-600 mt-1">Upload brake test certificates for vehicles</p>
+                  </div>
+                  <button
+                    onClick={() => setShowBrakeTestModal(false)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div className="p-6">
+                <BrakeTestUploadForm 
+                  vehicles={vehicles}
+                  maintenanceProviders={maintenanceProviders}
+                  onSuccess={() => {
+                    setShowBrakeTestModal(false)
+                    // Refresh data if needed
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tacho Calibration Upload Modal */}
+        {showTachoCalibrationModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+              <div className="p-6 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-semibold text-gray-900">Upload Tacho Calibration Certificate</h2>
+                    <p className="text-sm text-gray-600 mt-1">Upload tachograph calibration certificates and update vehicle expiry dates</p>
+                  </div>
+                  <button
+                    onClick={() => setShowTachoCalibrationModal(false)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div className="p-6">
+                <TachoCalibrationUploadForm 
+                  vehicles={vehicles}
+                  maintenanceProviders={maintenanceProviders}
+                  onSuccess={() => {
+                    setShowTachoCalibrationModal(false)
+                    // Refresh data if needed
+                  }}
+                />
+              </div>
+            </div>
           </div>
         )}
 
@@ -1130,8 +1180,6 @@ function EditInspectionForm({
           required
         >
           <option value="safety_inspection">Safety Inspection</option>
-          <option value="mot">MOT</option>
-          <option value="tax">Tax</option>
           <option value="tacho_calibration">Tacho Calibration</option>
         </select>
       </div>
@@ -1256,7 +1304,7 @@ function AddInspectionModal({
 }) {
   const [formData, setFormData] = useState({
     vehicle_id: '',
-    inspection_type: 'safety_inspection' as 'safety_inspection' | 'tax' | 'mot' | 'tacho_calibration',
+    inspection_type: 'safety_inspection' as 'safety_inspection' | 'tacho_calibration',
     scheduled_date: '',
     frequency_weeks: 8,
     maintenance_provider_id: '',
@@ -1368,8 +1416,6 @@ function AddInspectionModal({
               required
             >
               <option value="safety_inspection">Safety Inspection</option>
-              <option value="mot">MOT</option>
-              <option value="tax">Tax</option>
               <option value="tacho_calibration">Tacho Calibration</option>
             </select>
           </div>
@@ -1513,7 +1559,7 @@ function ProviderManagementModal({
       onSuccess()
     } catch (err: any) {
       console.error('Error deleting provider:', err)
-      alert('Failed to delete provider: ' + err.message)
+      setError('Failed to delete provider: ' + err.message)
     }
   }
 
@@ -1537,7 +1583,7 @@ function ProviderManagementModal({
       onSuccess()
     } catch (err: any) {
       console.error('Error updating provider:', err)
-      alert('Failed to update provider: ' + err.message)
+      setError('Failed to update provider: ' + err.message)
     }
   }
 

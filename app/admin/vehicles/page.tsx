@@ -32,7 +32,10 @@ export default function AdminVehicles() {
       height: '',
       weight: ''
     },
-    adr_classifications: [] as string[]
+    adr_classifications: [] as string[],
+    tax_due_date: '',
+    mot_due_date: '',
+    tacho_expiry_date: ''
   })
 
   useEffect(() => {
@@ -112,7 +115,10 @@ export default function AdminVehicles() {
             height: formData.dimensions.height ? parseFloat(formData.dimensions.height) : null,
             weight: formData.dimensions.weight ? parseFloat(formData.dimensions.weight) : null
           },
-          adr_classifications: formData.adr_classifications
+          adr_classifications: formData.adr_classifications,
+          tax_due_date: formData.tax_due_date || null,
+          mot_due_date: formData.mot_due_date || null,
+          tacho_expiry_date: formData.tacho_expiry_date || null
         })
 
       if (error) {
@@ -136,7 +142,10 @@ export default function AdminVehicles() {
           height: '',
           weight: ''
         },
-        adr_classifications: []
+        adr_classifications: [],
+        tax_due_date: '',
+        mot_due_date: '',
+        tacho_expiry_date: ''
       })
       setShowCreateForm(false)
       fetchVehicles()
@@ -168,7 +177,10 @@ export default function AdminVehicles() {
             height: formData.dimensions.height ? parseFloat(formData.dimensions.height) : null,
             weight: formData.dimensions.weight ? parseFloat(formData.dimensions.weight) : null
           },
-          adr_classifications: formData.adr_classifications
+          adr_classifications: formData.adr_classifications,
+          tax_due_date: formData.tax_due_date || null,
+          mot_due_date: formData.mot_due_date || null,
+          tacho_expiry_date: formData.tacho_expiry_date || null
         })
         .eq('id', editingVehicle.id)
 
@@ -227,7 +239,10 @@ export default function AdminVehicles() {
         height: vehicle.dimensions?.height?.toString() || '',
         weight: vehicle.dimensions?.weight?.toString() || ''
       },
-      adr_classifications: vehicle.adr_classifications || []
+      adr_classifications: vehicle.adr_classifications || [],
+      tax_due_date: vehicle.tax_due_date || '',
+      mot_due_date: vehicle.mot_due_date || '',
+      tacho_expiry_date: vehicle.tacho_expiry_date || ''
     })
   }
 
@@ -281,6 +296,15 @@ export default function AdminVehicles() {
                     Dimensions
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Tax Due
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    MOT Due
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Tacho Expiry
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -319,6 +343,45 @@ export default function AdminVehicles() {
                           {vehicle.dimensions.width && ` × ${vehicle.dimensions.width}m`}
                           {vehicle.dimensions.height && ` × ${vehicle.dimensions.height}m`}
                         </div>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {vehicle.tax_due_date ? (
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                          new Date(vehicle.tax_due_date) <= new Date() ? 'bg-red-100 text-red-800' :
+                          new Date(vehicle.tax_due_date) <= new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-green-100 text-green-800'
+                        }`}>
+                          {new Date(vehicle.tax_due_date).toLocaleDateString()}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">Not set</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {vehicle.mot_due_date ? (
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                          new Date(vehicle.mot_due_date) <= new Date() ? 'bg-red-100 text-red-800' :
+                          new Date(vehicle.mot_due_date) <= new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-green-100 text-green-800'
+                        }`}>
+                          {new Date(vehicle.mot_due_date).toLocaleDateString()}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">Not set</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {vehicle.tacho_expiry_date ? (
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                          new Date(vehicle.tacho_expiry_date) <= new Date() ? 'bg-red-100 text-red-800' :
+                          new Date(vehicle.tacho_expiry_date) <= new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-green-100 text-green-800'
+                        }`}>
+                          {new Date(vehicle.tacho_expiry_date).toLocaleDateString()}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">Not set</span>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
@@ -437,6 +500,36 @@ export default function AdminVehicles() {
                       </select>
                     </div>
 
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Tax Due Date</label>
+                        <input
+                          type="date"
+                          value={formData.tax_due_date}
+                          onChange={(e) => setFormData({ ...formData, tax_due_date: e.target.value })}
+                          className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">MOT Due Date</label>
+                        <input
+                          type="date"
+                          value={formData.mot_due_date}
+                          onChange={(e) => setFormData({ ...formData, mot_due_date: e.target.value })}
+                          className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Tacho Calibration Expiry Date</label>
+                        <input
+                          type="date"
+                          value={formData.tacho_expiry_date}
+                          onChange={(e) => setFormData({ ...formData, tacho_expiry_date: e.target.value })}
+                          className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                        />
+                      </div>
+                    </div>
+
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">Dimensions</label>
                       <div className="grid grid-cols-4 gap-2">
@@ -523,3 +616,4 @@ export default function AdminVehicles() {
     </ProtectedRoute>
   )
 }
+

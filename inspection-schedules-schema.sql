@@ -21,7 +21,7 @@ CREATE TABLE inspection_schedules (
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     vehicle_id UUID NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
     maintenance_provider_id UUID REFERENCES maintenance_providers(id),
-    inspection_type VARCHAR(50) NOT NULL CHECK (inspection_type IN ('safety_inspection', 'tax', 'mot', 'tacho_calibration')),
+    inspection_type VARCHAR(50) NOT NULL CHECK (inspection_type IN ('safety_inspection', 'tacho_calibration')),
     scheduled_date DATE NOT NULL,
     frequency_weeks INTEGER NOT NULL DEFAULT 26 CHECK (frequency_weeks > 0 AND frequency_weeks <= 104),
     notes TEXT,

@@ -9,6 +9,8 @@ interface Vehicle {
   make: string
   model: string
   year: number
+  tax_due_date?: string
+  mot_due_date?: string
 }
 
 interface MaintenanceProvider {
@@ -26,7 +28,7 @@ interface InspectionSchedule {
   id: string
   vehicle_id: string
   maintenance_provider_id?: string
-  inspection_type: 'safety_inspection' | 'tax' | 'mot' | 'tacho_calibration'
+  inspection_type: 'safety_inspection' | 'tacho_calibration'
   scheduled_date: string
   frequency_weeks: number
   notes?: string
@@ -51,7 +53,7 @@ interface CalendarEvent {
   id: string
   title: string
   date: string
-  type: 'scheduled' | 'completed' | 'overdue'
+  type: 'scheduled' | 'completed' | 'overdue' | 'tax_due' | 'mot_due'
   inspection_type: string
   vehicle_registration: string
   maintenance_provider?: string
@@ -64,9 +66,10 @@ interface CalendarViewProps {
   tenantId: string
   onEventClick?: (event: CalendarEvent) => void
   onDateClick?: (date: string) => void
+  onCompleteInspection?: (schedule: InspectionSchedule) => void
 }
 
-export default function InspectionCalendar({ tenantId, onEventClick, onDateClick }: CalendarViewProps) {
+export default function InspectionCalendar({ tenantId, onEventClick, onDateClick, onCompleteInspection }: CalendarViewProps) {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [view, setView] = useState<'month' | 'week' | 'day'>('month')
   const [events, setEvents] = useState<CalendarEvent[]>([])
@@ -97,7 +100,7 @@ export default function InspectionCalendar({ tenantId, onEventClick, onDateClick
         .from('inspection_schedules')
         .select(`
           *,
-          vehicles (id, registration, make, model, year),
+          vehicles (id, registration, make, model, year, tax_due_date, mot_due_date),
           maintenance_providers (id, name, contact_person)
         `)
         .eq('tenant_id', tenantId)
@@ -105,15 +108,27 @@ export default function InspectionCalendar({ tenantId, onEventClick, onDateClick
         .gte('scheduled_date', startDate.toISOString().split('T')[0])
         .lte('scheduled_date', endDate.toISOString().split('T')[0])
 
+      // Fetch vehicles with MOT and Tax due dates
+      const { data: vehicles, error: vehiclesError } = await supabase
+        .from('vehicles')
+        .select('id, registration, make, model, year, tax_due_date, mot_due_date')
+        .eq('tenant_id', tenantId)
+        .or('tax_due_date.not.is.null,mot_due_date.not.is.null')
+
       if (schedulesError) {
         console.error('Error fetching inspection data:', schedulesError)
+        return
+      }
+
+      if (vehiclesError) {
+        console.error('Error fetching vehicles data:', vehiclesError)
         return
       }
 
       // Combine and format events
       const calendarEvents: CalendarEvent[] = []
 
-      // Add scheduled inspections only
+      // Add scheduled inspections
       schedules?.forEach(schedule => {
         const isOverdue = new Date(schedule.scheduled_date) < new Date()
         
@@ -132,18 +147,6 @@ export default function InspectionCalendar({ tenantId, onEventClick, onDateClick
           ? schedule.scheduled_date.split('T')[0] 
           : schedule.scheduled_date
         
-        // Debug logging for data processing
-        console.log('Processing schedule:', {
-          id: schedule.id,
-          inspection_type: schedule.inspection_type,
-          inspection_type_display: inspectionTypeDisplay,
-          scheduled_date: schedule.scheduled_date,
-          event_date: eventDate,
-          vehicle: schedule.vehicles,
-          vehicle_registration: vehicleRegistration,
-          is_overdue: isOverdue
-        })
-        
         calendarEvents.push({
           id: `schedule-${schedule.id}`,
           title: `${inspectionTypeDisplay} - ${vehicleRegistration}`,
@@ -154,6 +157,60 @@ export default function InspectionCalendar({ tenantId, onEventClick, onDateClick
           maintenance_provider: schedule.maintenance_providers?.name,
           notes: schedule.notes
         })
+      })
+
+      // Add MOT and Tax due dates
+      vehicles?.forEach(vehicle => {
+        const today = new Date()
+        const thirtyDaysFromNow = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000)
+
+        // Add Tax due date
+        if (vehicle.tax_due_date) {
+          const taxDate = new Date(vehicle.tax_due_date)
+          const taxDateStr = vehicle.tax_due_date.includes('T') 
+            ? vehicle.tax_due_date.split('T')[0] 
+            : vehicle.tax_due_date
+
+          // Only add if within current view range
+          if (taxDate >= startDate && taxDate <= endDate) {
+            const isOverdue = taxDate < today
+            const isDueSoon = taxDate <= thirtyDaysFromNow && taxDate >= today
+
+            calendarEvents.push({
+              id: `tax-${vehicle.id}`,
+              title: `Tax Due - ${vehicle.registration}`,
+              date: taxDateStr,
+              type: isOverdue ? 'overdue' : 'tax_due',
+              inspection_type: 'tax',
+              vehicle_registration: vehicle.registration,
+              notes: isOverdue ? 'Tax overdue' : isDueSoon ? 'Tax due soon' : 'Tax due'
+            })
+          }
+        }
+
+        // Add MOT due date
+        if (vehicle.mot_due_date) {
+          const motDate = new Date(vehicle.mot_due_date)
+          const motDateStr = vehicle.mot_due_date.includes('T') 
+            ? vehicle.mot_due_date.split('T')[0] 
+            : vehicle.mot_due_date
+
+          // Only add if within current view range
+          if (motDate >= startDate && motDate <= endDate) {
+            const isOverdue = motDate < today
+            const isDueSoon = motDate <= thirtyDaysFromNow && motDate >= today
+
+            calendarEvents.push({
+              id: `mot-${vehicle.id}`,
+              title: `MOT Due - ${vehicle.registration}`,
+              date: motDateStr,
+              type: isOverdue ? 'overdue' : 'mot_due',
+              inspection_type: 'mot',
+              vehicle_registration: vehicle.registration,
+              notes: isOverdue ? 'MOT overdue' : isDueSoon ? 'MOT due soon' : 'MOT due'
+            })
+          }
+        }
       })
 
       setEvents(calendarEvents)
@@ -279,6 +336,10 @@ export default function InspectionCalendar({ tenantId, onEventClick, onDateClick
         return 'bg-green-100 text-green-800 border-green-200'
       case 'overdue':
         return 'bg-red-100 text-red-800 border-red-200'
+      case 'tax_due':
+        return 'bg-purple-100 text-purple-800 border-purple-200'
+      case 'mot_due':
+        return 'bg-orange-100 text-orange-800 border-orange-200'
       default:
         return 'bg-gray-100 text-gray-800 border-gray-200'
     }
@@ -485,11 +546,10 @@ export default function InspectionCalendar({ tenantId, onEventClick, onDateClick
               {dayEvents.map(event => (
                 <div
                   key={event.id}
-                  className={`p-3 rounded-lg border ${getEventTypeColor(event.type)} cursor-pointer hover:shadow-md transition-shadow`}
-                  onClick={() => onEventClick?.(event)}
+                  className={`p-3 rounded-lg border ${getEventTypeColor(event.type)} hover:shadow-md transition-shadow`}
                 >
                   <div className="flex justify-between items-start">
-                    <div>
+                    <div className="flex-1 cursor-pointer" onClick={() => onEventClick?.(event)}>
                       <h3 className="font-medium">{event.title}</h3>
                       <p className="text-sm opacity-75">
                         {event.inspection_type.replace('_', ' ').toUpperCase()}
@@ -505,14 +565,47 @@ export default function InspectionCalendar({ tenantId, onEventClick, onDateClick
                         </p>
                       )}
                     </div>
-                    <div className="text-right">
+                    <div className="flex items-center space-x-2">
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                         event.type === 'scheduled' ? 'bg-blue-100 text-blue-800' :
                         event.type === 'completed' ? 'bg-green-100 text-green-800' :
-                        'bg-red-100 text-red-800'
+                        event.type === 'overdue' ? 'bg-red-100 text-red-800' :
+                        event.type === 'tax_due' ? 'bg-purple-100 text-purple-800' :
+                        event.type === 'mot_due' ? 'bg-orange-100 text-orange-800' :
+                        'bg-gray-100 text-gray-800'
                       }`}>
                         {event.type.toUpperCase()}
                       </span>
+                      {(event.type === 'scheduled' || event.type === 'overdue') && event.inspection_type !== 'tax' && event.inspection_type !== 'mot' && onCompleteInspection && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            // Find the original schedule data
+                            const scheduleId = event.id.replace('schedule-', '')
+                            const schedule = events.find(e => e.id === event.id)
+                            if (schedule) {
+                              // Create a mock schedule object for the completion modal
+                              const mockSchedule: InspectionSchedule = {
+                                id: scheduleId,
+                                vehicle_id: '', // Will be filled by the modal
+                                inspection_type: event.inspection_type as 'safety_inspection' | 'tacho_calibration',
+                                scheduled_date: event.date,
+                                vehicle: {
+                                  id: '',
+                                  registration: event.vehicle_registration,
+                                  make: '',
+                                  model: '',
+                                  year: 0
+                                }
+                              }
+                              onCompleteInspection(mockSchedule)
+                            }
+                          }}
+                          className="px-3 py-1 text-xs bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                          Complete
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -607,6 +700,14 @@ export default function InspectionCalendar({ tenantId, onEventClick, onDateClick
         <div className="flex items-center space-x-2">
           <div className="w-3 h-3 bg-red-100 border border-red-200 rounded"></div>
           <span>Overdue</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className="w-3 h-3 bg-purple-100 border border-purple-200 rounded"></div>
+          <span>Tax Due</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className="w-3 h-3 bg-orange-100 border border-orange-200 rounded"></div>
+          <span>MOT Due</span>
         </div>
       </div>
 
