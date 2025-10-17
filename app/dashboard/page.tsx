@@ -6,21 +6,21 @@ import { useAuth } from '@/components/AuthProvider'
 import ProtectedRoute from '@/components/ProtectedRoute'
 
 export default function DashboardPage() {
-  const { userProfile, isAdmin, isDriver, isMaintenanceProvider } = useAuth()
+  const { userProfile, isAdmin, isDriver, isMaintenanceProvider, isSuperUser } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
     if (!userProfile) return
 
     // Redirect users to their role-specific dashboard
-    if (isAdmin) {
+    if (isSuperUser || isAdmin) {
       router.push('/admin/dashboard')
     } else if (isDriver) {
       router.push('/driver')
     } else if (isMaintenanceProvider) {
       router.push('/maintenance')
     }
-  }, [userProfile, isAdmin, isDriver, isMaintenanceProvider, router])
+  }, [userProfile, isAdmin, isDriver, isMaintenanceProvider, isSuperUser, router])
 
   return (
     <ProtectedRoute>

@@ -2,11 +2,22 @@ import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co'
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-key'
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder-service-key'
 
 // Only create client if we have valid URLs
 export const supabase = supabaseUrl.includes('placeholder') 
   ? null 
   : createClient(supabaseUrl, supabaseAnonKey)
+
+// Service role client for admin operations (server-side only)
+export const supabaseAdmin = supabaseUrl.includes('placeholder') || supabaseServiceRoleKey.includes('placeholder')
+  ? null 
+  : createClient(supabaseUrl, supabaseServiceRoleKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    })
 
 // Database types
 export interface Database {
@@ -74,6 +85,9 @@ export interface Database {
           adr_classifications: string[] | null
           fuel_type: string | null
           status: string | null
+          tax_due_date: string | null
+          mot_due_date: string | null
+          tacho_expiry_date: string | null
           current_location: any // Can be PostGIS GEOMETRY or JSONB {lat, lng}
           created_at: string
           updated_at: string
@@ -90,6 +104,9 @@ export interface Database {
           adr_classifications?: string[] | null
           fuel_type?: string | null
           status?: string | null
+          tax_due_date?: string | null
+          mot_due_date?: string | null
+          tacho_expiry_date?: string | null
           current_location?: any
           created_at?: string
           updated_at?: string
@@ -107,6 +124,105 @@ export interface Database {
           created_at?: string
         }
       }
+      depots: {
+        Row: {
+          id: string
+          tenant_id: string
+          name: string
+          description: string | null
+          address: string
+          contact_person: string | null
+          contact_phone: string | null
+          contact_email: string | null
+          operating_hours: string | null
+          facilities: string[] | null
+          capacity: number | null
+          current_vehicles: number
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          tenant_id: string
+          name: string
+          description?: string | null
+          address: string
+          contact_person?: string | null
+          contact_phone?: string | null
+          contact_email?: string | null
+          operating_hours?: string | null
+          facilities?: string[] | null
+          capacity?: number | null
+          current_vehicles?: number
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          tenant_id?: string
+          name?: string
+          description?: string | null
+          address?: string
+          contact_person?: string | null
+          contact_phone?: string | null
+          contact_email?: string | null
+          operating_hours?: string | null
+          facilities?: string[] | null
+          capacity?: number | null
+          current_vehicles?: number
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      depot_vehicles: {
+        Row: {
+          id: string
+          depot_id: string
+          vehicle_id: string
+          assigned_by: string
+          assigned_at: string
+        }
+        Insert: {
+          id?: string
+          depot_id: string
+          vehicle_id: string
+          assigned_by: string
+          assigned_at?: string
+        }
+        Update: {
+          id?: string
+          depot_id?: string
+          vehicle_id?: string
+          assigned_by?: string
+          assigned_at?: string
+        }
+      }
+      depot_drivers: {
+        Row: {
+          id: string
+          depot_id: string
+          driver_id: string
+          assigned_by: string
+          assigned_at: string
+        }
+        Insert: {
+          id?: string
+          depot_id: string
+          driver_id: string
+          assigned_by: string
+          assigned_at?: string
+        }
+        Update: {
+          id?: string
+          depot_id?: string
+          driver_id?: string
+          assigned_by?: string
+          assigned_at?: string
+        }
+      }
       drivers: {
         Row: {
           id: string
@@ -116,6 +232,7 @@ export interface Database {
           licence_expiry: string | null
           cpc_expiry: string | null
           tacho_card_expiry: string | null
+          status: string | null
           created_at: string
         }
         Insert: {
@@ -126,6 +243,7 @@ export interface Database {
           licence_expiry?: string | null
           cpc_expiry?: string | null
           tacho_card_expiry?: string | null
+          status?: string | null
           created_at?: string
         }
         Update: {
@@ -136,6 +254,27 @@ export interface Database {
           licence_expiry?: string | null
           cpc_expiry?: string | null
           tacho_card_expiry?: string | null
+          status?: string | null
+          created_at?: string
+        }
+      }
+      vehicle_types: {
+        Row: {
+          id: string
+          name: string
+          description: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          description?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          description?: string | null
           created_at?: string
         }
       }

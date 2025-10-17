@@ -10,6 +10,12 @@ export default function AuthCallback() {
   useEffect(() => {
     const handleAuthCallback = async () => {
       try {
+        if (!supabase) {
+          console.error('Supabase client not available')
+          router.push('/auth/login?error=supabase_not_available')
+          return
+        }
+
         const { data, error } = await supabase.auth.getSession()
         
         if (error) {
@@ -19,8 +25,23 @@ export default function AuthCallback() {
         }
 
         if (data.session) {
-          // User is authenticated, redirect to dashboard
-          router.push('/dashboard')
+          // Get user profile to determine role-based redirect
+          const { data: userProfile } = await supabase
+            .from('users')
+            .select('role')
+            .eq('id', data.session.user.id)
+            .single()
+
+          // Redirect based on user role
+          if (userProfile?.role === 'super_user' || userProfile?.role === 'admin') {
+            router.push('/admin/dashboard')
+          } else if (userProfile?.role === 'driver') {
+            router.push('/driver')
+          } else if (userProfile?.role === 'maintenance_provider') {
+            router.push('/maintenance')
+          } else {
+            router.push('/dashboard')
+          }
         } else {
           // No session, redirect to login
           router.push('/auth/login')

@@ -4,11 +4,27 @@ import { useState, useRef, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { getOrCreateTenantId } from '@/lib/tenant'
 
+interface MaintenanceProvider {
+  id: string
+  name: string
+  contact_person?: string
+  email?: string
+  phone?: string
+  address?: string
+  specializations?: string[]
+  is_active: boolean
+}
+
 interface InspectionSchedule {
   id: string
   vehicle_id: string
+  maintenance_provider_id?: string
   inspection_type: 'safety_inspection' | 'tacho_calibration'
   scheduled_date: string
+  frequency_weeks: number
+  notes?: string
+  is_active: boolean
+  created_at: string
   vehicle?: {
     id: string
     registration: string
@@ -16,6 +32,7 @@ interface InspectionSchedule {
     model: string
     year: number
   }
+  maintenance_provider?: MaintenanceProvider
 }
 
 interface Defect {
@@ -87,12 +104,30 @@ export default function InspectionCompletionModal({
     notes: ''
   })
   const [showPdfExport, setShowPdfExport] = useState(false)
+  const [completingDefect, setCompletingDefect] = useState<VehicleDefect | null>(null)
+  const [defectCompletionData, setDefectCompletionData] = useState({
+    repair_method: '',
+    parts_used: '',
+    labor_hours: '',
+    cost: '',
+    notes: ''
+  })
+  const [defectCompletionFiles, setDefectCompletionFiles] = useState<File[]>([])
+  const defectCompletionFileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (isOpen) {
       fetchExistingDefects()
+      
+      // Auto-populate inspector name with maintenance provider
+      if (inspection?.maintenance_provider?.name) {
+        setFormData(prev => ({
+          ...prev,
+          inspector_name: inspection.maintenance_provider.name
+        }))
+      }
     }
-  }, [isOpen])
+  }, [isOpen, inspection])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -154,6 +189,118 @@ export default function InspectionCompletionModal({
     }
   }
 
+  const handleCompleteDefect = (defect: VehicleDefect) => {
+    setCompletingDefect(defect)
+    setDefectCompletionData({
+      repair_method: '',
+      parts_used: '',
+      labor_hours: '',
+      cost: '',
+      notes: ''
+    })
+    setDefectCompletionFiles([])
+  }
+
+  const handleDefectCompletionFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const newFiles = Array.from(e.target.files)
+      setDefectCompletionFiles(prev => [...prev, ...newFiles])
+    }
+  }
+
+  const removeDefectCompletionFile = (index: number) => {
+    setDefectCompletionFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const submitDefectCompletion = async () => {
+    if (!completingDefect) return
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.user) {
+        throw new Error('User not authenticated')
+      }
+
+      const tenantId = await getOrCreateTenantId()
+      if (!tenantId) {
+        throw new Error('Failed to get tenant ID')
+      }
+
+      // Upload files first
+      const uploadedFiles: string[] = []
+      for (let i = 0; i < defectCompletionFiles.length; i++) {
+        const file = defectCompletionFiles[i]
+        const filePath = await uploadFile(file, session.user.id)
+        uploadedFiles.push(filePath)
+      }
+
+      // Create defect completion record
+      const { data: completionData, error: completionError } = await supabase
+        .from('defect_completions')
+        .insert({
+          tenant_id: tenantId,
+          defect_id: completingDefect.id,
+          completed_by: session.user.id,
+          repair_method: defectCompletionData.repair_method || null,
+          parts_used: defectCompletionData.parts_used || null,
+          labor_hours: defectCompletionData.labor_hours ? parseFloat(defectCompletionData.labor_hours) : null,
+          cost: defectCompletionData.cost ? parseFloat(defectCompletionData.cost) : null,
+          notes: defectCompletionData.notes || null
+        })
+        .select()
+        .single()
+
+      if (completionError) {
+        throw completionError
+      }
+
+      // Upload documents for this completion
+      for (const filePath of uploadedFiles) {
+        await supabase
+          .from('defect_completion_documents')
+          .insert({
+            tenant_id: tenantId,
+            defect_completion_id: completionData.id,
+            document_name: filePath.split('/').pop() || 'document',
+            supabase_path: filePath,
+            file_type: filePath.split('.').pop() || 'unknown',
+            file_size: 0 // We don't track size in this implementation
+          })
+      }
+
+      // Update defect status to completed
+      await supabase
+        .from('vehicle_defects')
+        .update({ 
+          status: 'completed',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', completingDefect.id)
+
+      // Refresh existing defects
+      await fetchExistingDefects()
+      
+      setCompletingDefect(null)
+      setDefectCompletionData({
+        repair_method: '',
+        parts_used: '',
+        labor_hours: '',
+        cost: '',
+        notes: ''
+      })
+      setDefectCompletionFiles([])
+
+    } catch (error) {
+      console.error('Error completing defect:', error)
+      setError(error instanceof Error ? error.message : 'Failed to complete defect')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const uploadFile = async (file: File, userId: string): Promise<string> => {
     const fileExt = file.name.split('.').pop()
     const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`
@@ -194,6 +341,11 @@ export default function InspectionCompletionModal({
       // Check if there are any critical defects that would prevent completion
       if (defects.some(d => d.severity_level === 'critical')) {
         throw new Error('Inspection cannot be completed with critical defects. These must be addressed immediately.')
+      }
+
+      // Check if there are any existing defects that are not completed
+      if (existingDefects.length > 0) {
+        throw new Error('Inspection cannot be completed until all existing defects are completed. Please complete all defects first.')
       }
 
       // Upload files first
@@ -718,9 +870,179 @@ export default function InspectionCompletionModal({
                           <p className="text-xs text-gray-500 mt-1">Notes: {defect.notes}</p>
                         )}
                       </div>
+                      <div className="ml-4">
+                        <button
+                          type="button"
+                          onClick={() => handleCompleteDefect(defect)}
+                          className="px-3 py-1 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                          Complete
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Defect Completion Modal */}
+          {completingDefect && (
+            <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+              <div className="relative top-20 mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-md bg-white">
+                <div className="mt-3">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-medium text-gray-900">
+                      Complete Defect: {completingDefect.defect_category}
+                    </h3>
+                    <button
+                      onClick={() => setCompletingDefect(null)}
+                      className="text-gray-400 hover:text-gray-600"
+                    >
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  <form onSubmit={(e) => { e.preventDefault(); submitDefectCompletion(); }} className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Repair Method</label>
+                        <input
+                          type="text"
+                          value={defectCompletionData.repair_method}
+                          onChange={(e) => setDefectCompletionData({ ...defectCompletionData, repair_method: e.target.value })}
+                          className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                          placeholder="Describe the repair method used"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Parts Used</label>
+                        <input
+                          type="text"
+                          value={defectCompletionData.parts_used}
+                          onChange={(e) => setDefectCompletionData({ ...defectCompletionData, parts_used: e.target.value })}
+                          className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                          placeholder="List parts used in repair"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Labor Hours</label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          value={defectCompletionData.labor_hours}
+                          onChange={(e) => setDefectCompletionData({ ...defectCompletionData, labor_hours: e.target.value })}
+                          className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                          placeholder="0.0"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Cost (£)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={defectCompletionData.cost}
+                          onChange={(e) => setDefectCompletionData({ ...defectCompletionData, cost: e.target.value })}
+                          className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                          placeholder="0.00"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Notes</label>
+                      <textarea
+                        value={defectCompletionData.notes}
+                        onChange={(e) => setDefectCompletionData({ ...defectCompletionData, notes: e.target.value })}
+                        rows={3}
+                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                        placeholder="Additional notes about the repair"
+                      />
+                    </div>
+
+                    {/* File Upload */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Upload Proof of Completion
+                      </label>
+                      <div className="border-2 border-dashed border-gray-300 rounded-lg p-6">
+                        <input
+                          ref={defectCompletionFileInputRef}
+                          type="file"
+                          multiple
+                          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                          onChange={handleDefectCompletionFileChange}
+                          className="hidden"
+                        />
+                        <div className="text-center">
+                          <svg className="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                            <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                          <div className="mt-4">
+                            <button
+                              type="button"
+                              onClick={() => defectCompletionFileInputRef.current?.click()}
+                              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                            >
+                              Select Files
+                            </button>
+                            <p className="mt-2 text-sm text-gray-500">
+                              Upload photos, receipts, or other proof of completion
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* File List */}
+                      {defectCompletionFiles.length > 0 && (
+                        <div className="mt-4">
+                          <h4 className="text-sm font-medium text-gray-700 mb-2">Selected Files:</h4>
+                          <div className="space-y-2">
+                            {defectCompletionFiles.map((file, index) => (
+                              <div key={index} className="flex items-center justify-between bg-gray-50 p-2 rounded">
+                                <span className="text-sm text-gray-600">{file.name}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => removeDefectCompletionFile(index)}
+                                  className="text-red-600 hover:text-red-800 text-sm"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex justify-end space-x-3 pt-4">
+                      <button
+                        type="button"
+                        onClick={() => setCompletingDefect(null)}
+                        className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={loading}
+                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-2"
+                      >
+                        {loading && (
+                          <svg className="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                        )}
+                        <span>{loading ? 'Completing...' : 'Complete Defect'}</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
               </div>
             </div>
           )}
@@ -1059,7 +1381,7 @@ export default function InspectionCompletionModal({
             </button>
             <button
               type="submit"
-              disabled={loading || defects.some(d => d.severity_level === 'critical')}
+              disabled={loading || defects.some(d => d.severity_level === 'critical') || existingDefects.length > 0}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-2"
             >
               {loading && (
@@ -1070,6 +1392,7 @@ export default function InspectionCompletionModal({
               <span>
                 {loading ? 'Completing...' : 
                  defects.some(d => d.severity_level === 'critical') ? 'Cannot Complete - Critical Defects' :
+                 existingDefects.length > 0 ? 'Cannot Complete - Existing Defects Not Completed' :
                  'Complete Inspection'}
               </span>
             </button>

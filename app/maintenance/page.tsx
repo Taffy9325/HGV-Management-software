@@ -39,6 +39,7 @@ export default function MaintenanceDashboard() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [inspections, setInspections] = useState<Inspection[]>([])
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([])
+  const [depots, setDepots] = useState<Tables<'depots'>[]>([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('overview')
   const [showCreateVehicle, setShowCreateVehicle] = useState(false)
@@ -52,7 +53,8 @@ export default function MaintenanceDashboard() {
     model: '',
     year: '',
     fuel_type: 'diesel',
-    status: 'available'
+    status: 'available',
+    depot_id: ''
   })
 
   const [inspectionForm, setInspectionForm] = useState({
@@ -106,9 +108,17 @@ export default function MaintenanceDashboard() {
         .order('created_at', { ascending: false })
         .limit(10)
 
+      // Fetch depots
+      const { data: depotsData } = await supabase
+        .from('depots')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .order('name')
+
       setVehicles(vehiclesData || [])
       setInspections(inspectionsData || [])
       setWorkOrders(workOrdersData || [])
+      setDepots(depotsData || [])
     } catch (error) {
       console.error('Error fetching maintenance data:', error)
     } finally {
@@ -121,7 +131,7 @@ export default function MaintenanceDashboard() {
     if (!supabase || !tenantId) return
 
     try {
-      const { error } = await supabase
+      const { data: vehicleData, error } = await supabase
         .from('vehicles')
         .insert({
           tenant_id: tenantId,
@@ -132,11 +142,30 @@ export default function MaintenanceDashboard() {
           fuel_type: vehicleForm.fuel_type,
           status: vehicleForm.status
         })
+        .select()
+        .single()
 
       if (error) {
         console.error('Error creating vehicle:', error)
         alert('Error creating vehicle: ' + error.message)
         return
+      }
+
+      // Handle depot assignment if selected
+      if (vehicleData && vehicleForm.depot_id) {
+        const { error: depotError } = await supabase
+          .from('depot_vehicles')
+          .insert({
+            depot_id: vehicleForm.depot_id,
+            vehicle_id: vehicleData.id,
+            assigned_at: new Date().toISOString(),
+            assigned_by: userProfile?.id
+          })
+
+        if (depotError) {
+          console.error('Error assigning vehicle to depot:', depotError)
+          alert('Vehicle created but failed to assign to depot: ' + depotError.message)
+        }
       }
 
       // Reset form and refresh data
@@ -146,7 +175,8 @@ export default function MaintenanceDashboard() {
         model: '',
         year: '',
         fuel_type: 'diesel',
-        status: 'available'
+        status: 'available',
+        depot_id: ''
       })
       setShowCreateVehicle(false)
       fetchMaintenanceData()
@@ -791,6 +821,21 @@ export default function MaintenanceDashboard() {
                         <option value="in_use">In Use</option>
                         <option value="maintenance">Maintenance</option>
                         <option value="out_of_service">Out of Service</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Depot</label>
+                      <select
+                        value={vehicleForm.depot_id}
+                        onChange={(e) => setVehicleForm({ ...vehicleForm, depot_id: e.target.value })}
+                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                      >
+                        <option value="">No Depot Assigned</option>
+                        {depots.map((depot) => (
+                          <option key={depot.id} value={depot.id}>
+                            {depot.name}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <div className="flex justify-end space-x-3 pt-4">

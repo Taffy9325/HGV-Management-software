@@ -15,7 +15,7 @@ export default function ProtectedRoute({
   allowedRoles = [], 
   requireAuth = true 
 }: ProtectedRouteProps) {
-  const { userProfile, loading, isAdmin, isDriver, isMaintenanceProvider } = useAuth()
+  const { userProfile, loading, isAdmin, isDriver, isMaintenanceProvider, isSuperUser } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
@@ -28,7 +28,8 @@ export default function ProtectedRoute({
 
     if (allowedRoles.length > 0 && userProfile) {
       const userRole = userProfile.role
-      if (!allowedRoles.includes(userRole)) {
+      // Super users can access any route
+      if (!isSuperUser && !allowedRoles.includes(userRole)) {
         // Redirect based on user role
         if (isAdmin) {
           router.push('/dashboard')
@@ -42,7 +43,7 @@ export default function ProtectedRoute({
         return
       }
     }
-  }, [userProfile, loading, allowedRoles, requireAuth, router, isAdmin, isDriver, isMaintenanceProvider])
+  }, [userProfile, loading, allowedRoles, requireAuth, router, isAdmin, isDriver, isMaintenanceProvider, isSuperUser])
 
   if (loading) {
     return (
@@ -59,7 +60,7 @@ export default function ProtectedRoute({
     return null
   }
 
-  if (allowedRoles.length > 0 && userProfile && !allowedRoles.includes(userProfile.role)) {
+  if (allowedRoles.length > 0 && userProfile && !isSuperUser && !allowedRoles.includes(userProfile.role)) {
     return null
   }
 

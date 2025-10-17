@@ -43,9 +43,10 @@ interface DayViewModalProps {
   events: CalendarEvent[]
   tenantId: string
   onEventUpdate: () => void
+  onCompleteInspection?: (event: CalendarEvent) => void
 }
 
-export default function DayViewModal({ isOpen, onClose, date, events, tenantId, onEventUpdate }: DayViewModalProps) {
+export default function DayViewModal({ isOpen, onClose, date, events, tenantId, onEventUpdate, onCompleteInspection }: DayViewModalProps) {
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [maintenanceProviders, setMaintenanceProviders] = useState<MaintenanceProvider[]>([])
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null)
@@ -559,6 +560,14 @@ export default function DayViewModal({ isOpen, onClose, date, events, tenantId, 
                       </span>
                       {(event.type === 'scheduled' || event.type === 'overdue') && (
                         <>
+                          {onCompleteInspection && (
+                            <button
+                              onClick={() => onCompleteInspection(event)}
+                              className="text-green-600 hover:text-green-800 text-sm font-medium"
+                            >
+                              Complete
+                            </button>
+                          )}
                           <button
                             onClick={() => handleEditEvent(event)}
                             className="text-blue-600 hover:text-blue-800 text-sm"

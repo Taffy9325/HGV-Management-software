@@ -11,6 +11,8 @@ export default function RegisterPage() {
   const router = useRouter()
 
   useEffect(() => {
+    if (!supabase) return
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         router.push('/dashboard')
@@ -44,14 +46,16 @@ export default function RegisterPage() {
         </div>
         
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-          <Auth
-            supabaseClient={supabase}
-            appearance={{ theme: ThemeSupa }}
-            providers={['google', 'github']}
-            redirectTo={`${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/auth/callback`}
-            onlyThirdPartyProviders={false}
-            view="sign_up"
-          />
+          {supabase && (
+            <Auth
+              supabaseClient={supabase}
+              appearance={{ theme: ThemeSupa }}
+              providers={['google', 'github']}
+              redirectTo={`${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/auth/callback`}
+              onlyThirdPartyProviders={false}
+              view="sign_up"
+            />
+          )}
         </div>
 
         <div className="text-center">

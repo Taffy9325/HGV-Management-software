@@ -6,21 +6,33 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 export default function Navigation() {
-  const { userProfile, isAdmin, isDriver, isMaintenanceProvider } = useAuth()
+  const { userProfile, isAdmin, isDriver, isMaintenanceProvider, isSuperUser } = useAuth()
   const pathname = usePathname()
 
   if (!userProfile) return null
 
   const getNavItems = () => {
-    if (isAdmin) {
-      return [
-        { name: 'Dashboard', href: '/dashboard', icon: '🏠' },
-        { name: 'Vehicles', href: '/vehicles', icon: '🚛' },
-        { name: 'Inspections', href: '/inspections', icon: '🔍' },
+    if (isAdmin || isSuperUser) {
+      const baseItems = [
+        { name: 'Dashboard', href: isSuperUser ? '/admin/dashboard' : '/dashboard', icon: '🏠' },
+        { name: 'Vehicles', href: isSuperUser ? '/admin/vehicles' : '/vehicles', icon: '🚛' },
+        { name: 'Inspections', href: isSuperUser ? '/admin/inspections' : '/inspections', icon: '🔍' },
         { name: 'Users', href: '/admin/users', icon: '👥' },
-        { name: 'Orders', href: '/orders', icon: '📦' },
-        { name: 'Reports', href: '/reports', icon: '📊' },
+        { name: 'Orders', href: isSuperUser ? '/admin/orders' : '/orders', icon: '📦' },
+        { name: 'Reports', href: isSuperUser ? '/admin/reports' : '/reports', icon: '📊' },
       ]
+      
+      // Add depot management for super users and admins
+      if (isSuperUser || isAdmin) {
+        baseItems.push({ name: 'Depots', href: '/admin/depots', icon: '🏢' })
+      }
+      
+      // Add organizations management for super users only
+      if (isSuperUser) {
+        baseItems.push({ name: 'Organizations', href: '/admin/organizations', icon: '🏢' })
+      }
+      
+      return baseItems
     } else if (isDriver) {
       return [
         { name: 'Dashboard', href: '/driver', icon: '🏠' },
@@ -74,6 +86,7 @@ export default function Navigation() {
                   {userProfile.email}
                 </span>
                 <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                  userProfile.role === 'super_user' ? 'bg-purple-100 text-purple-800' :
                   userProfile.role === 'admin' ? 'bg-red-100 text-red-800' :
                   userProfile.role === 'driver' ? 'bg-blue-100 text-blue-800' :
                   'bg-green-100 text-green-800'

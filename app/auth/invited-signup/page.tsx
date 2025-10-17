@@ -9,7 +9,7 @@ export default function InvitedSignup() {
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
   
-  const [invitation, setInvitation] = useState(null)
+  const [invitation, setInvitation] = useState<{ id: string; email: string; role: string; tenant_id: string; first_name: string; last_name: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [signingUp, setSigningUp] = useState(false)
   const [formData, setFormData] = useState({
@@ -52,7 +52,7 @@ export default function InvitedSignup() {
     }
   }
 
-  const handleSignup = async (e) => {
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!supabase || !invitation) return
 

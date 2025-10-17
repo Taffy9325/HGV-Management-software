@@ -17,6 +17,7 @@ interface AuthContextType {
   isAdmin: boolean
   isDriver: boolean
   isMaintenanceProvider: boolean
+  isSuperUser: boolean
   tenantId: string | null
 }
 
@@ -28,6 +29,7 @@ const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   isDriver: false,
   isMaintenanceProvider: false,
+  isSuperUser: false,
   tenantId: null,
 })
 
@@ -137,6 +139,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isAdmin = userProfile?.role === 'admin'
   const isDriver = userProfile?.role === 'driver'
   const isMaintenanceProvider = userProfile?.role === 'maintenance_provider'
+  const isSuperUser = userProfile?.role === 'super_user'
   const tenantId = userProfile?.tenant_id || null
 
   const value = {
@@ -147,6 +150,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isAdmin,
     isDriver,
     isMaintenanceProvider,
+    isSuperUser,
     tenantId,
   }
 

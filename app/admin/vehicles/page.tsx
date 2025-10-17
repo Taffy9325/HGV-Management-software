@@ -7,12 +7,17 @@ import { supabase, Tables } from '@/lib/supabase'
 
 interface VehicleWithType extends Tables<'vehicles'> {
   vehicle_types?: Tables<'vehicle_types'> | null
+  depot_vehicles?: Array<{
+    depot_id: string
+    depots?: Tables<'depots'> | null
+  }>
 }
 
 export default function AdminVehicles() {
-  const { userProfile, tenantId } = useAuth()
+  const { userProfile, tenantId, isSuperUser } = useAuth()
   const [vehicles, setVehicles] = useState<VehicleWithType[]>([])
   const [vehicleTypes, setVehicleTypes] = useState<Tables<'vehicle_types'>[]>([])
+  const [depots, setDepots] = useState<Tables<'depots'>[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [editingVehicle, setEditingVehicle] = useState<VehicleWithType | null>(null)
@@ -24,6 +29,7 @@ export default function AdminVehicles() {
     model: '',
     year: '',
     vehicle_type_id: '',
+    depot_id: '',
     fuel_type: 'diesel',
     status: 'available' as string,
     dimensions: {
@@ -39,26 +45,37 @@ export default function AdminVehicles() {
   })
 
   useEffect(() => {
-    if (tenantId) {
+    if (tenantId || isSuperUser) {
       fetchVehicles()
       fetchVehicleTypes()
+      fetchDepots()
     }
-  }, [tenantId])
+  }, [tenantId, userProfile])
 
   const fetchVehicles = async () => {
-    if (!supabase || !tenantId) return
+    if (!supabase || (!tenantId && !isSuperUser)) return
 
     try {
       setLoading(true)
       
-      const { data: vehiclesData, error } = await supabase
+      let query = supabase
         .from('vehicles')
         .select(`
           *,
-          vehicle_types (*)
+          vehicle_types (*),
+          depot_vehicles (
+            depot_id,
+            depots (*)
+          )
         `)
-        .eq('tenant_id', tenantId)
         .order('created_at', { ascending: false })
+
+      // If not super user, filter by tenant
+      if (!isSuperUser && tenantId) {
+        query = query.eq('tenant_id', tenantId)
+      }
+
+      const { data: vehiclesData, error } = await query
 
       if (error) {
         console.error('Error fetching vehicles:', error)
@@ -70,6 +87,33 @@ export default function AdminVehicles() {
       console.error('Error fetching vehicles:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchDepots = async () => {
+    if (!supabase || (!tenantId && !isSuperUser)) return
+
+    try {
+      let query = supabase
+        .from('depots')
+        .select('*')
+        .order('name')
+
+      // If not super user, filter by tenant
+      if (!isSuperUser && tenantId) {
+        query = query.eq('tenant_id', tenantId)
+      }
+
+      const { data: depotsData, error } = await query
+
+      if (error) {
+        console.error('Error fetching depots:', error)
+        return
+      }
+
+      setDepots(depotsData || [])
+    } catch (error) {
+      console.error('Error fetching depots:', error)
     }
   }
 
@@ -95,10 +139,11 @@ export default function AdminVehicles() {
 
   const handleCreateVehicle = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!supabase || !tenantId) return
+    if (!supabase || (!tenantId && !isSuperUser)) return
 
     try {
-      const { error } = await supabase
+      // First create the vehicle
+      const { data: vehicleData, error: vehicleError } = await supabase
         .from('vehicles')
         .insert({
           tenant_id: tenantId,
@@ -120,11 +165,30 @@ export default function AdminVehicles() {
           mot_due_date: formData.mot_due_date || null,
           tacho_expiry_date: formData.tacho_expiry_date || null
         })
+        .select()
+        .single()
 
-      if (error) {
-        console.error('Error creating vehicle:', error)
-        alert('Error creating vehicle: ' + error.message)
+      if (vehicleError) {
+        console.error('Error creating vehicle:', vehicleError)
+        alert('Error creating vehicle: ' + vehicleError.message)
         return
+      }
+
+      // If depot is selected, assign vehicle to depot
+      if (formData.depot_id && vehicleData) {
+        const { error: depotError } = await supabase
+          .from('depot_vehicles')
+          .insert({
+            depot_id: formData.depot_id,
+            vehicle_id: vehicleData.id,
+            assigned_by: userProfile?.id,
+            assigned_at: new Date().toISOString()
+          })
+
+        if (depotError) {
+          console.error('Error assigning vehicle to depot:', depotError)
+          alert('Vehicle created but failed to assign to depot: ' + depotError.message)
+        }
       }
 
       // Reset form and refresh vehicles
@@ -134,6 +198,7 @@ export default function AdminVehicles() {
         model: '',
         year: '',
         vehicle_type_id: '',
+        depot_id: '',
         fuel_type: 'diesel',
         status: 'available',
         dimensions: {
@@ -161,6 +226,7 @@ export default function AdminVehicles() {
     if (!supabase || !editingVehicle) return
 
     try {
+      // Update the vehicle
       const { error } = await supabase
         .from('vehicles')
         .update({
@@ -188,6 +254,36 @@ export default function AdminVehicles() {
         console.error('Error updating vehicle:', error)
         alert('Error updating vehicle: ' + error.message)
         return
+      }
+
+      // Handle depot assignment
+      if (formData.depot_id) {
+        // Remove existing depot assignments
+        await supabase
+          .from('depot_vehicles')
+          .delete()
+          .eq('vehicle_id', editingVehicle.id)
+
+        // Add new depot assignment
+        const { error: depotError } = await supabase
+          .from('depot_vehicles')
+          .insert({
+            depot_id: formData.depot_id,
+            vehicle_id: editingVehicle.id,
+            assigned_by: userProfile?.id,
+            assigned_at: new Date().toISOString()
+          })
+
+        if (depotError) {
+          console.error('Error updating depot assignment:', depotError)
+          alert('Vehicle updated but failed to update depot assignment: ' + depotError.message)
+        }
+      } else {
+        // Remove depot assignment if none selected
+        await supabase
+          .from('depot_vehicles')
+          .delete()
+          .eq('vehicle_id', editingVehicle.id)
       }
 
       setEditingVehicle(null)
@@ -224,13 +320,18 @@ export default function AdminVehicles() {
   }
 
   const startEdit = (vehicle: VehicleWithType) => {
+    console.log('🔧 startEdit function called')
+    console.log('🔧 Vehicle data:', vehicle)
+    console.log('🔧 Setting editingVehicle to:', vehicle.id)
     setEditingVehicle(vehicle)
+    console.log('🔧 editingVehicle state should now be:', vehicle.id)
     setFormData({
       registration: vehicle.registration,
       make: vehicle.make || '',
       model: vehicle.model || '',
       year: vehicle.year?.toString() || '',
       vehicle_type_id: vehicle.vehicle_type_id || '',
+      depot_id: vehicle.depot_vehicles && vehicle.depot_vehicles.length > 0 ? vehicle.depot_vehicles[0].depot_id : '',
       fuel_type: vehicle.fuel_type || 'diesel',
       status: vehicle.status || 'available',
       dimensions: {
@@ -258,7 +359,7 @@ export default function AdminVehicles() {
   }
 
   return (
-    <ProtectedRoute allowedRoles={['admin']}>
+    <ProtectedRoute allowedRoles={['admin', 'super_user']}>
       <div className="min-h-screen bg-gray-50 py-8">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="mb-8">
@@ -277,6 +378,12 @@ export default function AdminVehicles() {
 
           {/* Vehicles Table */}
           <div className="bg-white shadow rounded-lg overflow-hidden">
+            <div className="p-4 bg-gray-50 border-b">
+              <h3 className="text-lg font-medium text-gray-900">Vehicles ({vehicles.length})</h3>
+              {vehicles.length === 0 && (
+                <p className="text-sm text-gray-500 mt-2">No vehicles found. Click "Add New Vehicle" to create one.</p>
+              )}
+            </div>
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
@@ -293,7 +400,7 @@ export default function AdminVehicles() {
                     Status
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Dimensions
+                    Depot
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Tax Due
@@ -310,8 +417,15 @@ export default function AdminVehicles() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {vehicles.map((vehicle) => (
-                  <tr key={vehicle.id}>
+                {vehicles.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                      No vehicles available
+                    </td>
+                  </tr>
+                ) : (
+                  vehicles.map((vehicle) => (
+                    <tr key={vehicle.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{vehicle.registration}</div>
                     </td>
@@ -337,12 +451,12 @@ export default function AdminVehicles() {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {vehicle.dimensions && (
-                        <div>
-                          {vehicle.dimensions.length && `${vehicle.dimensions.length}m`}
-                          {vehicle.dimensions.width && ` × ${vehicle.dimensions.width}m`}
-                          {vehicle.dimensions.height && ` × ${vehicle.dimensions.height}m`}
-                        </div>
+                      {vehicle.depot_vehicles && vehicle.depot_vehicles.length > 0 ? (
+                        <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-800">
+                          {vehicle.depot_vehicles[0].depots?.name || 'Unknown Depot'}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">No Depot</span>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -387,19 +501,20 @@ export default function AdminVehicles() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                       <button
                         onClick={() => startEdit(vehicle)}
-                        className="text-blue-600 hover:text-blue-900"
+                        className="text-blue-600 hover:text-blue-900 px-3 py-1 border border-blue-300 rounded hover:bg-blue-50"
                       >
                         Edit
                       </button>
                       <button
                         onClick={() => handleDeleteVehicle(vehicle.id)}
-                        className="text-red-600 hover:text-red-900"
+                        className="text-red-600 hover:text-red-900 px-3 py-1 border border-red-300 rounded hover:bg-red-50"
                       >
                         Delete
                       </button>
                     </td>
                   </tr>
-                ))}
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -486,18 +601,33 @@ export default function AdminVehicles() {
                       </div>
                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Status</label>
-                      <select
-                        value={formData.status}
-                        onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
-                      >
-                        <option value="available">Available</option>
-                        <option value="in_use">In Use</option>
-                        <option value="maintenance">Maintenance</option>
-                        <option value="out_of_service">Out of Service</option>
-                      </select>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Status</label>
+                        <select
+                          value={formData.status}
+                          onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                          className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                        >
+                          <option value="available">Available</option>
+                          <option value="in_use">In Use</option>
+                          <option value="maintenance">Maintenance</option>
+                          <option value="out_of_service">Out of Service</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Depot</label>
+                        <select
+                          value={formData.depot_id}
+                          onChange={(e) => setFormData({ ...formData, depot_id: e.target.value })}
+                          className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                        >
+                          <option value="">Select Depot</option>
+                          {depots.map((depot) => (
+                            <option key={depot.id} value={depot.id}>{depot.name}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">

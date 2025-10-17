@@ -460,6 +460,7 @@ function AddVehicleModal({ onClose, onSuccess }: { onClose: () => void; onSucces
     model: '',
     year: new Date().getFullYear(),
     vehicle_type_id: '',
+    depot_id: '',
     fuel_type: 'diesel',
     status: 'available' as const,
     dimensions: {
@@ -478,11 +479,13 @@ function AddVehicleModal({ onClose, onSuccess }: { onClose: () => void; onSucces
     tacho_expiry_date: ''
   })
   const [vehicleTypes, setVehicleTypes] = useState<any[]>([])
+  const [depots, setDepots] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [adrInput, setAdrInput] = useState('')
 
   useEffect(() => {
     fetchVehicleTypes()
+    fetchDepots()
   }, [])
 
   const fetchVehicleTypes = async () => {
@@ -612,9 +615,11 @@ function AddVehicleModal({ onClose, onSuccess }: { onClose: () => void; onSucces
 
       console.log('Attempting to insert vehicle data:', vehicleData)
 
-      const { error } = await supabase
+      const { data: vehicleDataResult, error } = await supabase
         .from('vehicles')
         .insert(vehicleData)
+        .select()
+        .single()
 
       if (error) {
         console.error('Error adding vehicle:', error)
@@ -626,6 +631,23 @@ function AddVehicleModal({ onClose, onSuccess }: { onClose: () => void; onSucces
         })
         alert(`Failed to add vehicle: ${error.message}`)
         return
+      }
+
+      // Handle depot assignment if selected
+      if (vehicleDataResult && formData.depot_id) {
+        const { error: depotError } = await supabase
+          .from('depot_vehicles')
+          .insert({
+            depot_id: formData.depot_id,
+            vehicle_id: vehicleDataResult.id,
+            assigned_at: new Date().toISOString(),
+            assigned_by: (await supabase.auth.getSession()).data.session?.user?.id
+          })
+
+        if (depotError) {
+          console.error('Error assigning vehicle to depot:', depotError)
+          alert('Vehicle created but failed to assign to depot: ' + depotError.message)
+        }
       }
 
       alert('Vehicle added successfully')
@@ -967,6 +989,57 @@ function AddVehicleModal({ onClose, onSuccess }: { onClose: () => void; onSucces
   )
 }
 
+// Fetch depots function for AddVehicleModal
+const fetchDepotsForModal = async () => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.user) return []
+
+    // Use the utility function to get or create tenant ID
+    const tenantId = await getOrCreateTenantId()
+    if (!tenantId) {
+      console.error('Failed to get tenant ID for depots')
+      return []
+    }
+
+    const { data, error } = await supabase
+      .from('depots')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .order('name')
+
+    if (error) {
+      console.error('Error fetching depots:', error)
+      return []
+    }
+
+    return data || []
+  } catch (error) {
+    console.error('Error fetching depots:', error)
+    return []
+  }
+}
+
+const fetchCurrentDepotForEditModal = async (vehicleId: string) => {
+  try {
+    const { data, error } = await supabase
+      .from('depot_vehicles')
+      .select('depot_id')
+      .eq('vehicle_id', vehicleId)
+      .maybeSingle()
+
+    if (error) {
+      console.error('Error fetching depot assignment:', error)
+      return ''
+    }
+
+    return data?.depot_id || ''
+  } catch (error) {
+    console.error('Error fetching depot assignment:', error)
+    return ''
+  }
+}
+
 // Edit Vehicle Modal Component
 function EditVehicleModal({ vehicle, onClose, onSuccess }: { vehicle: Vehicle; onClose: () => void; onSuccess: () => void }) {
   const [formData, setFormData] = useState({
@@ -975,6 +1048,7 @@ function EditVehicleModal({ vehicle, onClose, onSuccess }: { vehicle: Vehicle; o
     model: vehicle.model,
     year: vehicle.year,
     vehicle_type_id: vehicle.vehicle_type_id || '',
+    depot_id: '',
     fuel_type: vehicle.fuel_type,
     status: vehicle.status,
     dimensions: {
@@ -993,11 +1067,18 @@ function EditVehicleModal({ vehicle, onClose, onSuccess }: { vehicle: Vehicle; o
     tacho_expiry_date: vehicle.tacho_expiry_date || ''
   })
   const [vehicleTypes, setVehicleTypes] = useState<any[]>([])
+  const [depots, setDepots] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [adrInput, setAdrInput] = useState('')
 
   useEffect(() => {
     fetchVehicleTypes()
+    fetchDepotsForModal().then(setDepots)
+    fetchCurrentDepotForEditModal(vehicle.id).then(depotId => {
+      if (depotId) {
+        setFormData(prev => ({ ...prev, depot_id: depotId }))
+      }
+    })
   }, [])
 
   const fetchVehicleTypes = async () => {
@@ -1073,6 +1154,36 @@ function EditVehicleModal({ vehicle, onClose, onSuccess }: { vehicle: Vehicle; o
         console.error('Error updating vehicle:', error)
         alert('Failed to update vehicle')
         return
+      }
+
+      // Handle depot assignment
+      if (formData.depot_id) {
+        // Remove existing depot assignments
+        await supabase
+          .from('depot_vehicles')
+          .delete()
+          .eq('vehicle_id', vehicle.id)
+
+        // Add new depot assignment
+        const { error: depotError } = await supabase
+          .from('depot_vehicles')
+          .insert({
+            depot_id: formData.depot_id,
+            vehicle_id: vehicle.id,
+            assigned_at: new Date().toISOString(),
+            assigned_by: (await supabase.auth.getSession()).data.session?.user?.id
+          })
+
+        if (depotError) {
+          console.error('Error updating depot assignment:', depotError)
+          alert('Vehicle updated but failed to update depot assignment: ' + depotError.message)
+        }
+      } else {
+        // Remove depot assignment if none selected
+        await supabase
+          .from('depot_vehicles')
+          .delete()
+          .eq('vehicle_id', vehicle.id)
       }
 
       alert('Vehicle updated successfully')
@@ -1386,6 +1497,26 @@ function EditVehicleModal({ vehicle, onClose, onSuccess }: { vehicle: Vehicle; o
                   placeholder="e.g., -2.2426"
                 />
               </div>
+            </div>
+          </div>
+
+          {/* Depot Assignment */}
+          <div className="space-y-4 pt-4">
+            <h3 className="text-lg font-semibold text-gray-900 border-b border-gray-200 pb-2">Depot Assignment</h3>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Depot</label>
+              <select
+                value={formData.depot_id}
+                onChange={(e) => setFormData({ ...formData, depot_id: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">No Depot Assigned</option>
+                {depots.map((depot) => (
+                  <option key={depot.id} value={depot.id}>
+                    {depot.name}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 

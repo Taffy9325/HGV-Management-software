@@ -264,12 +264,12 @@ export default function AdminMaintenanceProviders() {
     }
   }
 
-  const formatDate = (dateString: string | null) => {
+  const formatDate = (dateString: string | null | undefined) => {
     if (!dateString) return 'N/A'
     return new Date(dateString).toLocaleDateString()
   }
 
-  const isExpiringSoon = (dateString: string | null, daysThreshold: number = 30) => {
+  const isExpiringSoon = (dateString: string | null | undefined, daysThreshold: number = 30) => {
     if (!dateString) return false
     const expiryDate = new Date(dateString)
     const today = new Date()
@@ -278,7 +278,7 @@ export default function AdminMaintenanceProviders() {
     return diffDays <= daysThreshold && diffDays >= 0
   }
 
-  const isExpired = (dateString: string | null) => {
+  const isExpired = (dateString: string | null | undefined) => {
     if (!dateString) return false
     const expiryDate = new Date(dateString)
     const today = new Date()

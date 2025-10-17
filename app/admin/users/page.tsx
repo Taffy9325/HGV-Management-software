@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useAuth } from '@/components/AuthProvider'
+import ProtectedRoute from '@/components/ProtectedRoute'
 import { supabase, Tables } from '@/lib/supabase'
 
 interface UserWithProfile extends Tables<'users'> {
@@ -10,8 +11,9 @@ interface UserWithProfile extends Tables<'users'> {
 }
 
 export default function UserManagement() {
-  const { userProfile, isAdmin, tenantId } = useAuth()
+  const { userProfile, isAdmin, isSuperUser, tenantId } = useAuth()
   const [users, setUsers] = useState<UserWithProfile[]>([])
+  const [organizations, setOrganizations] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [editingUser, setEditingUser] = useState<UserWithProfile | null>(null)
@@ -22,6 +24,7 @@ export default function UserManagement() {
     firstName: '',
     lastName: '',
     role: 'driver' as string,
+    organization_id: '', // For super users to select organization
     profile: {},
     // Driver specific
     licence_number: '',
@@ -39,34 +42,68 @@ export default function UserManagement() {
   })
 
   useEffect(() => {
-    if (isAdmin && tenantId) {
+    if (isAdmin || isSuperUser) {
       fetchUsers()
+      if (isSuperUser) {
+        fetchOrganizations()
+      }
     }
-  }, [isAdmin, tenantId])
+  }, [isAdmin, isSuperUser, tenantId])
 
   const fetchUsers = async () => {
-    if (!supabase || !tenantId) return
+    if (!supabase || (!tenantId && !isSuperUser)) return
 
     try {
       setLoading(true)
       
-      // Fetch users with their role-specific data
-      const { data: usersData, error } = await supabase
+      // Fetch users first
+      let query = supabase
         .from('users')
-        .select(`
-          *,
-          drivers (*),
-          maintenance_providers (*)
-        `)
-        .eq('tenant_id', tenantId)
+        .select('*')
         .order('created_at', { ascending: false })
+
+      // If not super user, filter by tenant
+      if (!isSuperUser && tenantId) {
+        query = query.eq('tenant_id', tenantId)
+      }
+
+      const { data: usersData, error } = await query
 
       if (error) {
         console.error('Error fetching users:', error)
         return
       }
 
-      setUsers(usersData || [])
+      // For each user, fetch their role-specific data separately
+      const usersWithRoles = await Promise.all(
+        (usersData || []).map(async (user) => {
+          const userWithRoles = { ...user, drivers: [], maintenance_providers: [] }
+          
+          // Fetch driver data if exists
+          if (user.role === 'driver' && supabase) {
+            const { data: driverData } = await supabase
+              .from('drivers')
+              .select('*')
+              .eq('user_id', user.id)
+              .maybeSingle()
+            if (driverData) userWithRoles.drivers = [driverData]
+          }
+          
+          // Fetch maintenance provider data if exists
+          if (user.role === 'maintenance_provider' && supabase) {
+            const { data: maintenanceData } = await supabase
+              .from('maintenance_providers')
+              .select('*')
+              .eq('user_id', user.id)
+              .maybeSingle()
+            if (maintenanceData) userWithRoles.maintenance_providers = [maintenanceData]
+          }
+          
+          return userWithRoles
+        })
+      )
+
+      setUsers(usersWithRoles)
     } catch (error) {
       console.error('Error fetching users:', error)
     } finally {
@@ -74,11 +111,43 @@ export default function UserManagement() {
     }
   }
 
-  const handleCreateUser = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!supabase || !tenantId) return
+  const fetchOrganizations = async () => {
+    if (!supabase) return
 
     try {
+      const { data: orgsData, error } = await supabase
+        .from('tenants')
+        .select('*')
+        .order('name', { ascending: true })
+
+      if (error) {
+        console.error('Error fetching organizations:', error)
+        return
+      }
+
+      setOrganizations(orgsData || [])
+    } catch (error) {
+      console.error('Error fetching organizations:', error)
+    }
+  }
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!supabase) return
+    
+    // For super users, we need to allow creation even without tenantId
+    // For regular admins, tenantId is required
+    if (!isSuperUser && !tenantId) return
+
+    try {
+      // Determine the tenant_id to use
+      const userTenantId = isSuperUser ? formData.organization_id : tenantId
+      
+      if (!userTenantId) {
+        alert('Please select an organization for the user')
+        return
+      }
+      
       // Generate a temporary UUID for the user (they'll link to auth later)
       const tempUserId = crypto.randomUUID()
       
@@ -87,7 +156,7 @@ export default function UserManagement() {
         .from('users')
         .insert({
           id: tempUserId,
-          tenant_id: tenantId,
+          tenant_id: userTenantId,
           email: formData.email,
           role: formData.role,
           profile: {
@@ -95,7 +164,8 @@ export default function UserManagement() {
             last_name: formData.lastName,
             phone: '',
             department: formData.role === 'admin' ? 'Administration' : 
-                       formData.role === 'driver' ? 'Driving' : 'Maintenance'
+                       formData.role === 'driver' ? 'Driving' : 
+                       formData.role === 'super_user' ? 'System Administration' : 'Maintenance'
           }
         })
         .select()
@@ -112,8 +182,8 @@ export default function UserManagement() {
         const { error: driverError } = await supabase
           .from('drivers')
           .insert({
-            tenant_id: tenantId,
-            user_id: authData.user.id,
+            tenant_id: userTenantId,
+            user_id: tempUserId,
             licence_number: formData.licence_number,
             licence_expiry: formData.licence_expiry || null,
             cpc_expiry: formData.cpc_expiry || null,
@@ -127,8 +197,8 @@ export default function UserManagement() {
         const { error: maintenanceError } = await supabase
           .from('maintenance_providers')
           .insert({
-            tenant_id: tenantId,
-            user_id: authData.user.id,
+            tenant_id: userTenantId,
+            user_id: tempUserId,
             company_name: formData.company_name,
             certification_number: formData.certification_number,
             certification_expiry: formData.certification_expiry || null,
@@ -146,7 +216,10 @@ export default function UserManagement() {
       // Reset form and refresh users
       setFormData({
         email: '',
+        firstName: '',
+        lastName: '',
         role: 'driver',
+        organization_id: '',
         profile: {},
         licence_number: '',
         licence_expiry: '',
@@ -161,31 +234,13 @@ export default function UserManagement() {
         address: {}
       })
       setShowCreateForm(false)
-      // Reset form
-      setFormData({
-        email: '',
-        firstName: '',
-        lastName: '',
-        role: 'driver',
-        profile: {},
-        licence_number: '',
-        licence_expiry: '',
-        cpc_expiry: '',
-        tacho_card_expiry: '',
-        company_name: '',
-        certification_number: '',
-        certification_expiry: '',
-        specializations: [],
-        contact_phone: '',
-        contact_email: '',
-        address: {}
-      })
       fetchUsers()
       
       // Generate invitation link
+      const invitationToken = crypto.randomUUID()
       const invitationLink = `${window.location.origin}/auth/invited-signup?token=${invitationToken}`
       
-      alert(`Invitation sent successfully! Send this link to ${formData.email}:\n\n${invitationLink}`)
+      alert(`User created successfully! Send this invitation link to ${formData.email}:\n\n${invitationLink}`)
     } catch (error) {
       console.error('Error creating user:', error)
       alert('Error creating user')
@@ -193,17 +248,20 @@ export default function UserManagement() {
   }
 
   const handleDeleteUser = async (userId: string) => {
-    if (!supabase) return
     if (!confirm('Are you sure you want to delete this user?')) return
 
     try {
-      // Delete from Supabase Auth
-      const { error: authError } = await supabase.auth.admin.deleteUser(userId)
-      
-      if (authError) {
-        console.error('Error deleting auth user:', authError)
-        alert('Error deleting user: ' + authError.message)
-        return
+      const response = await fetch('/api/admin/delete-user', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to delete user')
       }
 
       // Refresh users list
@@ -211,11 +269,11 @@ export default function UserManagement() {
       alert('User deleted successfully')
     } catch (error) {
       console.error('Error deleting user:', error)
-      alert('Error deleting user')
+      alert('Error deleting user: ' + (error instanceof Error ? error.message : 'Unknown error'))
     }
   }
 
-  if (!isAdmin) {
+  if (!isAdmin && !isSuperUser) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -238,7 +296,8 @@ export default function UserManagement() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8">
+    <ProtectedRoute allowedRoles={['admin', 'super_user']}>
+      <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">User Management</h1>
@@ -292,6 +351,7 @@ export default function UserManagement() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                      user.role === 'super_user' ? 'bg-purple-100 text-purple-800' :
                       user.role === 'admin' ? 'bg-red-100 text-red-800' :
                       user.role === 'driver' ? 'bg-blue-100 text-blue-800' :
                       'bg-green-100 text-green-800'
@@ -375,6 +435,25 @@ export default function UserManagement() {
                     />
                   </div>
 
+                  {isSuperUser && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Organization *</label>
+                      <select
+                        required
+                        value={formData.organization_id}
+                        onChange={(e) => setFormData({ ...formData, organization_id: e.target.value })}
+                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                      >
+                        <option value="">Select Organization</option>
+                        {organizations.map((org) => (
+                          <option key={org.id} value={org.id}>
+                            {org.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Role</label>
                     <select
@@ -385,6 +464,7 @@ export default function UserManagement() {
                       <option value="admin">Admin</option>
                       <option value="driver">Driver</option>
                       <option value="maintenance_provider">Maintenance Provider</option>
+                      {isSuperUser && <option value="super_user">Super User</option>}
                     </select>
                   </div>
 
@@ -505,5 +585,6 @@ export default function UserManagement() {
         )}
       </div>
     </div>
+    </ProtectedRoute>
   )
 }

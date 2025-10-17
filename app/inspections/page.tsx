@@ -12,6 +12,10 @@ import InspectionCompletionModal from '@/components/InspectionCompletionModal'
 import GlobalDefectsModal from '@/components/GlobalDefectsModal'
 import BrakeTestUploadForm from '@/components/BrakeTestUploadForm'
 import TachoCalibrationUploadForm from '@/components/TachoCalibrationUploadForm'
+import ScheduledInspectionsModal from '@/components/ScheduledInspectionsModal'
+import CompletedInspectionsModal from '@/components/CompletedInspectionsModal'
+import ThisWeekInspectionsModal from '@/components/ThisWeekInspectionsModal'
+import TotalDefectsModal from '@/components/TotalDefectsModal'
 import { maintainRecurringSchedules, createRecurringSchedules } from '@/lib/scheduling'
 
 interface Vehicle {
@@ -97,7 +101,9 @@ export default function InspectionsPage() {
   const [inspections, setInspections] = useState<SafetyInspection[]>([])
   const [schedules, setSchedules] = useState<InspectionSchedule[]>([])
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
+  const [depots, setDepots] = useState<Depot[]>([])
   const [maintenanceProviders, setMaintenanceProviders] = useState<MaintenanceProvider[]>([])
+  const [completedInspections, setCompletedInspections] = useState<any[]>([])
   const [stats, setStats] = useState<InspectionStats>({
     totalInspections: 0,
     upcomingInspections: 0,
@@ -128,8 +134,13 @@ export default function InspectionsPage() {
   const [selectedScheduleForCompletion, setSelectedScheduleForCompletion] = useState<InspectionSchedule | null>(null)
   const [showDefectsModal, setShowDefectsModal] = useState(false)
   const [openDefectsCount, setOpenDefectsCount] = useState(0)
+  const [totalDefectsCount, setTotalDefectsCount] = useState(0)
+  const [showTotalDefectsModal, setShowTotalDefectsModal] = useState(false)
   const [showBrakeTestModal, setShowBrakeTestModal] = useState(false)
   const [showTachoCalibrationModal, setShowTachoCalibrationModal] = useState(false)
+  const [showScheduledModal, setShowScheduledModal] = useState(false)
+  const [showCompletedModal, setShowCompletedModal] = useState(false)
+  const [showThisWeekModal, setShowThisWeekModal] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -206,6 +217,20 @@ export default function InspectionsPage() {
         setMaintenanceProviders(providersData || [])
       }
 
+      // Fetch depots
+      const { data: depotsData, error: depotsError } = await supabase
+        .from('depots')
+        .select('id, name, address')
+        .eq('tenant_id', tenantIdResult)
+        .order('name')
+
+      if (depotsError) {
+        console.error('Error fetching depots:', depotsError)
+        setDepots([])
+      } else {
+        setDepots(depotsData || [])
+      }
+
       // Fetch inspection schedules
       const { data: schedulesData, error: schedulesError } = await supabase
         .from('inspection_schedules')
@@ -267,6 +292,35 @@ export default function InspectionsPage() {
         setInspections(formattedInspections)
       }
 
+      // Fetch completed inspections
+      const { data: completedData, error: completedError } = await supabase
+        .from('inspection_completions')
+        .select(`
+          id,
+          vehicle_id,
+          inspection_type,
+          completion_date,
+          inspector_id,
+          mileage,
+          notes,
+          inspection_passed,
+          next_due_date,
+          vehicles!inner(id, registration, make, model, year)
+        `)
+        .eq('tenant_id', tenantIdResult)
+        .order('completion_date', { ascending: false })
+
+      if (completedError) {
+        console.error('Error fetching completed inspections:', completedError)
+        setCompletedInspections([])
+      } else {
+        const formattedCompleted = (completedData || []).map(completion => ({
+          ...completion,
+          vehicle: completion.vehicles
+        }))
+        setCompletedInspections(formattedCompleted)
+      }
+
       // Fetch open defects count
       await fetchOpenDefectsCount()
 
@@ -306,19 +360,34 @@ export default function InspectionsPage() {
       const tenantId = await getOrCreateTenantId()
       if (!tenantId) return
 
-      const { count, error } = await supabase
+      // Fetch open/in-progress defects count
+      const { count: openCount, error: openError } = await supabase
         .from('vehicle_defects')
         .select('*', { count: 'exact', head: true })
         .eq('tenant_id', tenantId)
         .in('status', ['open', 'in_progress'])
         .eq('is_active', true)
 
-      if (error) {
-        console.error('Error fetching defects count:', error)
+      if (openError) {
+        console.error('Error fetching open defects count:', openError)
         return
       }
 
-      setOpenDefectsCount(count || 0)
+      // Fetch total defects count (only open/in-progress defects)
+      const { count: totalCount, error: totalError } = await supabase
+        .from('vehicle_defects')
+        .select('*', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .in('status', ['open', 'in_progress'])
+        .eq('is_active', true)
+
+      if (totalError) {
+        console.error('Error fetching total defects count:', totalError)
+        return
+      }
+
+      setOpenDefectsCount(openCount || 0)
+      setTotalDefectsCount(totalCount || 0)
     } catch (err) {
       console.error('Error fetching defects count:', err)
     }
@@ -352,25 +421,30 @@ export default function InspectionsPage() {
   // Helper functions for stats calculation
   const calculateStats = () => {
     const now = new Date()
+    const today = now.toISOString().split('T')[0] // YYYY-MM-DD format
     const oneWeekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+    
+    // Get completed inspection schedule IDs
+    const completedScheduleIds = new Set(completedInspections.map(c => c.inspection_schedule_id))
     
     const totalScheduled = schedules.length
     const upcomingScheduled = schedules.filter(schedule => 
-      new Date(schedule.scheduled_date) > now
+      schedule.scheduled_date > today && !completedScheduleIds.has(schedule.id)
     ).length
     const overdueScheduled = schedules.filter(schedule => 
-      new Date(schedule.scheduled_date) < now
+      schedule.scheduled_date < today && !completedScheduleIds.has(schedule.id)
     ).length
     const thisWeekScheduled = schedules.filter(schedule => {
       const scheduleDate = new Date(schedule.scheduled_date)
-      return scheduleDate >= now && scheduleDate <= oneWeekFromNow
+      return scheduleDate >= now && scheduleDate <= oneWeekFromNow && !completedScheduleIds.has(schedule.id)
     }).length
 
     return {
       totalScheduled,
       upcomingScheduled,
       overdueScheduled,
-      thisWeekScheduled
+      thisWeekScheduled,
+      completedInspections: completedInspections.length
     }
   }
 
@@ -475,7 +549,10 @@ export default function InspectionsPage() {
         {/* Inspection Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           {/* Total Scheduled Inspections */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div 
+            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
+            onClick={() => setShowScheduledModal(true)}
+          >
             <div className="flex items-center">
               <div className="flex-shrink-0">
                 <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -487,6 +564,7 @@ export default function InspectionsPage() {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Total Scheduled</p>
                 <p className="text-2xl font-semibold text-gray-900">{calculateStats().totalScheduled}</p>
+                <p className="text-xs text-gray-500 mt-1">Click to view details</p>
               </div>
             </div>
           </div>
@@ -513,7 +591,10 @@ export default function InspectionsPage() {
           </div>
 
           {/* Completed Inspections */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div 
+            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
+            onClick={() => setShowCompletedModal(true)}
+          >
             <div className="flex items-center">
               <div className="flex-shrink-0">
                 <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
@@ -525,12 +606,16 @@ export default function InspectionsPage() {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Completed</p>
                 <p className="text-2xl font-semibold text-gray-900">{calculateStats().completedInspections}</p>
+                <p className="text-xs text-gray-500 mt-1">Click to view details</p>
               </div>
             </div>
           </div>
 
           {/* This Week Inspections */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div 
+            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
+            onClick={() => setShowThisWeekModal(true)}
+          >
             <div className="flex items-center">
               <div className="flex-shrink-0">
                 <div className="w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center">
@@ -542,6 +627,28 @@ export default function InspectionsPage() {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">This Week</p>
                 <p className="text-2xl font-semibold text-gray-900">{calculateStats().thisWeekScheduled}</p>
+                <p className="text-xs text-gray-500 mt-1">Click to view details</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Total Defects */}
+          <div 
+            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
+            onClick={() => setShowTotalDefectsModal(true)}
+          >
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+                  <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                </div>
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Total Defects</p>
+                <p className="text-2xl font-semibold text-gray-900">{totalDefectsCount}</p>
+                <p className="text-xs text-gray-500 mt-1">Click to view details</p>
               </div>
             </div>
           </div>
@@ -741,6 +848,29 @@ export default function InspectionsPage() {
             events={[]} // The calendar component will handle fetching events
             tenantId={tenantId}
             onEventUpdate={handleCalendarRefresh}
+            onCompleteInspection={(event) => {
+              // Convert CalendarEvent to InspectionSchedule format
+              const scheduleId = event.id.replace('schedule-', '')
+              // Find the full schedule data to get maintenance provider info
+              const fullSchedule = schedules.find(s => s.id === scheduleId)
+              const mockSchedule: InspectionSchedule = {
+                id: scheduleId,
+                vehicle_id: fullSchedule?.vehicle_id || '',
+                inspection_type: event.inspection_type as 'safety_inspection' | 'tacho_calibration',
+                scheduled_date: event.date,
+                vehicle: {
+                  id: fullSchedule?.vehicle?.id || '',
+                  registration: event.vehicle_registration,
+                  make: fullSchedule?.vehicle?.make || '',
+                  model: fullSchedule?.vehicle?.model || '',
+                  year: fullSchedule?.vehicle?.year || 0
+                },
+                maintenance_provider: fullSchedule?.maintenance_provider
+              }
+              setSelectedScheduleForCompletion(mockSchedule)
+              setShowCompletionModal(true)
+              setShowDayViewModal(false)
+            }}
           />
         )}
 
@@ -779,6 +909,54 @@ export default function InspectionsPage() {
             fetchOpenDefectsCount()
           }}
         />
+
+        {/* Scheduled Inspections Modal */}
+        {showScheduledModal && tenantId && (
+          <ScheduledInspectionsModal
+            isOpen={showScheduledModal}
+            onClose={() => setShowScheduledModal(false)}
+            tenantId={tenantId}
+            onCompleteInspection={(schedule) => {
+              setSelectedScheduleForCompletion(schedule)
+              setShowCompletionModal(true)
+              setShowScheduledModal(false)
+            }}
+          />
+        )}
+
+        {/* Completed Inspections Modal */}
+        {showCompletedModal && tenantId && (
+          <CompletedInspectionsModal
+            isOpen={showCompletedModal}
+            onClose={() => setShowCompletedModal(false)}
+            tenantId={tenantId}
+          />
+        )}
+
+        {/* This Week Inspections Modal */}
+        {showThisWeekModal && tenantId && (
+          <ThisWeekInspectionsModal
+            isOpen={showThisWeekModal}
+            onClose={() => setShowThisWeekModal(false)}
+            tenantId={tenantId}
+            onCompleteInspection={(schedule) => {
+              setSelectedScheduleForCompletion(schedule)
+              setShowCompletionModal(true)
+              setShowThisWeekModal(false)
+            }}
+          />
+        )}
+
+        {/* Total Defects Modal */}
+        {showTotalDefectsModal && (
+          <TotalDefectsModal
+            isOpen={showTotalDefectsModal}
+            onClose={() => setShowTotalDefectsModal(false)}
+            onDefectCompleted={() => {
+              fetchOpenDefectsCount()
+            }}
+          />
+        )}
 
         {/* Brake Test Upload Modal */}
         {showBrakeTestModal && (
@@ -864,6 +1042,7 @@ export default function InspectionsPage() {
         {showAddModal && (
           <AddInspectionModal
             vehicles={vehicles}
+            depots={depots}
             maintenanceProviders={maintenanceProviders}
             onClose={() => setShowAddModal(false)}
             onSuccess={() => {
@@ -927,6 +1106,7 @@ export default function InspectionsPage() {
                   <EditInspectionForm
                     inspection={selectedInspection}
                     vehicles={vehicles}
+                    depots={depots}
                     maintenanceProviders={maintenanceProviders}
                     onSave={() => {
                       setIsEditingInspection(false)
@@ -1070,18 +1250,21 @@ export default function InspectionsPage() {
 function EditInspectionForm({
   inspection,
   vehicles,
+  depots,
   maintenanceProviders,
   onSave,
   onCancel
 }: {
   inspection: InspectionSchedule
   vehicles: Vehicle[]
+  depots: Depot[]
   maintenanceProviders: MaintenanceProvider[]
   onSave: () => void
   onCancel: () => void
 }) {
   const [formData, setFormData] = useState({
     vehicle_id: inspection.vehicle_id,
+    depot_id: (inspection as any).depot_id || '',
     inspection_type: inspection.inspection_type,
     scheduled_date: inspection.scheduled_date,
     frequency_weeks: inspection.frequency_weeks,
@@ -1105,6 +1288,7 @@ function EditInspectionForm({
 
       const updateData = {
         vehicle_id: formData.vehicle_id,
+        depot_id: formData.depot_id || null,
         inspection_type: formData.inspection_type,
         scheduled_date: formData.scheduled_date,
         frequency_weeks: formData.frequency_weeks,
@@ -1168,6 +1352,25 @@ function EditInspectionForm({
         </select>
       </div>
 
+      {/* Depot Selection */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Depot
+        </label>
+        <select
+          value={formData.depot_id}
+          onChange={(e) => setFormData({ ...formData, depot_id: e.target.value })}
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        >
+          <option value="">Select a depot (optional)</option>
+          {depots.map((depot) => (
+            <option key={depot.id} value={depot.id}>
+              {depot.name} - {depot.address.city}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {/* Inspection Type */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -1205,15 +1408,15 @@ function EditInspectionForm({
         </label>
         <input
           type="number"
-          min="1"
-          max="52"
+          min="0"
+          max="104"
           value={formData.frequency_weeks}
           onChange={(e) => setFormData({ ...formData, frequency_weeks: parseInt(e.target.value) })}
           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           required
         />
         <p className="text-sm text-gray-500 mt-1">
-          How often this inspection should be repeated (in weeks)
+          How often this inspection should be repeated (in weeks, 0-104 for testing)
         </p>
       </div>
 
@@ -1290,20 +1493,34 @@ function EditInspectionForm({
   )
 }
 
+interface Depot {
+  id: string
+  name: string
+  address: {
+    city: string
+    street: string
+    postcode: string
+    country: string
+  }
+}
+
 // AddInspectionModal Component
 function AddInspectionModal({
   vehicles,
+  depots,
   maintenanceProviders,
   onClose,
   onSuccess
 }: {
   vehicles: Vehicle[]
+  depots: Depot[]
   maintenanceProviders: MaintenanceProvider[]
   onClose: () => void
   onSuccess: () => void
 }) {
   const [formData, setFormData] = useState({
     vehicle_id: '',
+    depot_id: '',
     inspection_type: 'safety_inspection' as 'safety_inspection' | 'tacho_calibration',
     scheduled_date: '',
     frequency_weeks: 8,
@@ -1327,6 +1544,7 @@ function AddInspectionModal({
       const inspectionData = {
         tenant_id: tenantId,
         vehicle_id: formData.vehicle_id,
+        depot_id: formData.depot_id || null,
         inspection_type: formData.inspection_type,
         scheduled_date: formData.scheduled_date,
         frequency_weeks: formData.frequency_weeks,
@@ -1404,6 +1622,25 @@ function AddInspectionModal({
             </select>
           </div>
 
+          {/* Depot Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Depot
+            </label>
+            <select
+              value={formData.depot_id}
+              onChange={(e) => setFormData({ ...formData, depot_id: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Select a depot (optional)</option>
+              {depots.map((depot) => (
+                <option key={depot.id} value={depot.id}>
+                  {depot.name} - {depot.address.city}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Inspection Type */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -1441,15 +1678,15 @@ function AddInspectionModal({
             </label>
             <input
               type="number"
-              min="1"
-              max="52"
+              min="0"
+              max="104"
               value={formData.frequency_weeks}
               onChange={(e) => setFormData({ ...formData, frequency_weeks: parseInt(e.target.value) })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               required
             />
             <p className="text-sm text-gray-500 mt-1">
-              How often this inspection should be repeated (in weeks)
+              How often this inspection should be repeated (in weeks, 0-104 for testing)
             </p>
           </div>
 

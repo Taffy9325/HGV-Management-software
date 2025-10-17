@@ -7,12 +7,17 @@ import { supabase, Tables } from '@/lib/supabase'
 
 interface DriverWithUser extends Tables<'drivers'> {
   users?: Tables<'users'> | null
+  depot_drivers?: Array<{
+    depot_id: string
+    depots?: Tables<'depots'> | null
+  }>
 }
 
 export default function AdminDrivers() {
-  const { userProfile, tenantId } = useAuth()
+  const { userProfile, tenantId, isSuperUser } = useAuth()
   const [drivers, setDrivers] = useState<DriverWithUser[]>([])
   const [users, setUsers] = useState<Tables<'users'>[]>([])
+  const [depots, setDepots] = useState<Tables<'depots'>[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [editingDriver, setEditingDriver] = useState<DriverWithUser | null>(null)
@@ -20,6 +25,7 @@ export default function AdminDrivers() {
   // Form state
   const [formData, setFormData] = useState({
     user_id: '',
+    depot_id: '',
     licence_number: '',
     licence_expiry: '',
     cpc_expiry: '',
@@ -28,26 +34,37 @@ export default function AdminDrivers() {
   })
 
   useEffect(() => {
-    if (tenantId) {
+    if (tenantId || isSuperUser) {
       fetchDrivers()
       fetchUsers()
+      fetchDepots()
     }
-  }, [tenantId])
+  }, [tenantId, isSuperUser])
 
   const fetchDrivers = async () => {
-    if (!supabase || !tenantId) return
+    if (!supabase || (!tenantId && !isSuperUser)) return
 
     try {
       setLoading(true)
       
-      const { data: driversData, error } = await supabase
+      let query = supabase
         .from('drivers')
         .select(`
           *,
-          users (*)
+          users (*),
+          depot_drivers (
+            depot_id,
+            depots (*)
+          )
         `)
-        .eq('tenant_id', tenantId)
         .order('created_at', { ascending: false })
+
+      // If not super user, filter by tenant
+      if (!isSuperUser && tenantId) {
+        query = query.eq('tenant_id', tenantId)
+      }
+
+      const { data: driversData, error } = await query
 
       if (error) {
         console.error('Error fetching drivers:', error)
@@ -62,16 +79,48 @@ export default function AdminDrivers() {
     }
   }
 
-  const fetchUsers = async () => {
-    if (!supabase || !tenantId) return
+  const fetchDepots = async () => {
+    if (!supabase || (!tenantId && !isSuperUser)) return
 
     try {
-      const { data: usersData, error } = await supabase
+      let query = supabase
+        .from('depots')
+        .select('*')
+        .order('name')
+
+      // If not super user, filter by tenant
+      if (!isSuperUser && tenantId) {
+        query = query.eq('tenant_id', tenantId)
+      }
+
+      const { data: depotsData, error } = await query
+
+      if (error) {
+        console.error('Error fetching depots:', error)
+        return
+      }
+
+      setDepots(depotsData || [])
+    } catch (error) {
+      console.error('Error fetching depots:', error)
+    }
+  }
+
+  const fetchUsers = async () => {
+    if (!supabase || (!tenantId && !isSuperUser)) return
+
+    try {
+      let query = supabase
         .from('users')
         .select('*')
-        .eq('tenant_id', tenantId)
-        .eq('role', 'driver')
-        .order('email')
+        .order('created_at', { ascending: false })
+
+      // If not super user, filter by tenant
+      if (!isSuperUser && tenantId) {
+        query = query.eq('tenant_id', tenantId)
+      }
+
+      const { data: usersData, error } = await query
 
       if (error) {
         console.error('Error fetching users:', error)
@@ -86,10 +135,11 @@ export default function AdminDrivers() {
 
   const handleCreateDriver = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!supabase || !tenantId) return
+    if (!supabase || (!tenantId && !isSuperUser)) return
 
     try {
-      const { error } = await supabase
+      // First create the driver
+      const { data: driverData, error: driverError } = await supabase
         .from('drivers')
         .insert({
           tenant_id: tenantId,
@@ -100,16 +150,36 @@ export default function AdminDrivers() {
           tacho_card_expiry: formData.tacho_card_expiry || null,
           status: formData.status as any
         })
+        .select()
+        .single()
 
-      if (error) {
-        console.error('Error creating driver:', error)
-        alert('Error creating driver: ' + error.message)
+      if (driverError) {
+        console.error('Error creating driver:', driverError)
+        alert('Error creating driver: ' + driverError.message)
         return
+      }
+
+      // If depot is selected, assign driver to depot
+      if (formData.depot_id && driverData) {
+        const { error: depotError } = await supabase
+          .from('depot_drivers')
+          .insert({
+            depot_id: formData.depot_id,
+            driver_id: driverData.id,
+            assigned_by: userProfile?.id,
+            assigned_at: new Date().toISOString()
+          })
+
+        if (depotError) {
+          console.error('Error assigning driver to depot:', depotError)
+          alert('Driver created but failed to assign to depot: ' + depotError.message)
+        }
       }
 
       // Reset form and refresh drivers
       setFormData({
         user_id: '',
+        depot_id: '',
         licence_number: '',
         licence_expiry: '',
         cpc_expiry: '',
@@ -130,6 +200,7 @@ export default function AdminDrivers() {
     if (!supabase || !editingDriver) return
 
     try {
+      // Update the driver
       const { error } = await supabase
         .from('drivers')
         .update({
@@ -146,6 +217,36 @@ export default function AdminDrivers() {
         console.error('Error updating driver:', error)
         alert('Error updating driver: ' + error.message)
         return
+      }
+
+      // Handle depot assignment
+      if (formData.depot_id) {
+        // Remove existing depot assignments
+        await supabase
+          .from('depot_drivers')
+          .delete()
+          .eq('driver_id', editingDriver.id)
+
+        // Add new depot assignment
+        const { error: depotError } = await supabase
+          .from('depot_drivers')
+          .insert({
+            depot_id: formData.depot_id,
+            driver_id: editingDriver.id,
+            assigned_by: userProfile?.id,
+            assigned_at: new Date().toISOString()
+          })
+
+        if (depotError) {
+          console.error('Error updating depot assignment:', depotError)
+          alert('Driver updated but failed to update depot assignment: ' + depotError.message)
+        }
+      } else {
+        // Remove depot assignment if none selected
+        await supabase
+          .from('depot_drivers')
+          .delete()
+          .eq('driver_id', editingDriver.id)
       }
 
       setEditingDriver(null)
@@ -185,6 +286,7 @@ export default function AdminDrivers() {
     setEditingDriver(driver)
     setFormData({
       user_id: driver.user_id || '',
+      depot_id: driver.depot_drivers && driver.depot_drivers.length > 0 ? driver.depot_drivers[0].depot_id : '',
       licence_number: driver.licence_number,
       licence_expiry: driver.licence_expiry || '',
       cpc_expiry: driver.cpc_expiry || '',
@@ -264,6 +366,9 @@ export default function AdminDrivers() {
                     Status
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Depot
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -318,6 +423,15 @@ export default function AdminDrivers() {
                         {driver.status?.replace('_', ' ').toUpperCase()}
                       </span>
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {driver.depot_drivers && driver.depot_drivers.length > 0 ? (
+                        <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-800">
+                          {driver.depot_drivers[0].depots?.name || 'Unknown Depot'}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">No Depot</span>
+                      )}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                       <button
                         onClick={() => startEdit(driver)}
@@ -348,24 +462,39 @@ export default function AdminDrivers() {
                   </h3>
                   
                   <form onSubmit={editingDriver ? handleUpdateDriver : handleCreateDriver} className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">User *</label>
-                      <select
-                        required
-                        value={formData.user_id}
-                        onChange={(e) => setFormData({ ...formData, user_id: e.target.value })}
-                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
-                      >
-                        <option value="">Select User</option>
-                        {users.map((user) => (
-                          <option key={user.id} value={user.id}>
-                            {user.profile?.first_name && user.profile?.last_name 
-                              ? `${user.profile.first_name} ${user.profile.last_name}`
-                              : user.email
-                            }
-                          </option>
-                        ))}
-                      </select>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">User *</label>
+                        <select
+                          required
+                          value={formData.user_id}
+                          onChange={(e) => setFormData({ ...formData, user_id: e.target.value })}
+                          className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                        >
+                          <option value="">Select User</option>
+                          {users.map((user) => (
+                            <option key={user.id} value={user.id}>
+                              {user.profile?.first_name && user.profile?.last_name 
+                                ? `${user.profile.first_name} ${user.profile.last_name}`
+                                : user.email
+                              }
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Depot</label>
+                        <select
+                          value={formData.depot_id}
+                          onChange={(e) => setFormData({ ...formData, depot_id: e.target.value })}
+                          className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2"
+                        >
+                          <option value="">Select Depot</option>
+                          {depots.map((depot) => (
+                            <option key={depot.id} value={depot.id}>{depot.name}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
 
                     <div>

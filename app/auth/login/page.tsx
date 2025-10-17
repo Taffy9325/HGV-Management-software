@@ -11,9 +11,27 @@ export default function LoginPage() {
   const router = useRouter()
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    if (!supabase) return
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session) {
-        router.push('/dashboard')
+        // Get user profile to determine role-based redirect
+        const { data: userProfile } = await supabase!
+          .from('users')
+          .select('role')
+          .eq('id', session.user.id)
+          .single()
+
+        // Redirect based on user role
+        if (userProfile?.role === 'super_user' || userProfile?.role === 'admin') {
+          router.push('/admin/dashboard')
+        } else if (userProfile?.role === 'driver') {
+          router.push('/driver')
+        } else if (userProfile?.role === 'maintenance_provider') {
+          router.push('/maintenance')
+        } else {
+          router.push('/dashboard')
+        }
       }
     })
 
@@ -44,13 +62,15 @@ export default function LoginPage() {
         </div>
         
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-          <Auth
-            supabaseClient={supabase}
-            appearance={{ theme: ThemeSupa }}
-            providers={['google', 'github']}
-            redirectTo={`${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/auth/callback`}
-            onlyThirdPartyProviders={false}
-          />
+          {supabase && (
+            <Auth
+              supabaseClient={supabase}
+              appearance={{ theme: ThemeSupa }}
+              providers={['google', 'github']}
+              redirectTo={`${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/auth/callback`}
+              onlyThirdPartyProviders={false}
+            />
+          )}
         </div>
 
         <div className="text-center">

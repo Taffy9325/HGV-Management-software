@@ -80,6 +80,7 @@ export default function OverdueInspectionsModal({ isOpen, onClose, tenantId, onI
       setLoading(true)
       const today = new Date().toISOString().split('T')[0]
       
+      // First, get all overdue inspection schedules
       const { data: inspectionsData, error } = await supabase
         .from('inspection_schedules')
         .select(`
@@ -98,8 +99,27 @@ export default function OverdueInspectionsModal({ isOpen, onClose, tenantId, onI
         return
       }
 
-      console.log('Overdue inspections fetched:', inspectionsData)
-      setOverdueInspections(inspectionsData || [])
+      // Get all completed inspection IDs to filter them out
+      const { data: completedData, error: completedError } = await supabase
+        .from('inspection_completions')
+        .select('inspection_schedule_id')
+        .eq('tenant_id', tenantId)
+
+      if (completedError) {
+        console.error('Error fetching completed inspections:', completedError)
+        setError('Failed to load completed inspections')
+        return
+      }
+
+      const completedScheduleIds = new Set(completedData?.map(c => c.inspection_schedule_id) || [])
+      
+      // Filter out completed inspections
+      const overdueNotCompleted = (inspectionsData || []).filter(
+        inspection => !completedScheduleIds.has(inspection.id)
+      )
+
+      console.log('Overdue inspections fetched:', overdueNotCompleted)
+      setOverdueInspections(overdueNotCompleted)
     } catch (error) {
       console.error('Error fetching overdue inspections:', error)
       setError('Failed to load overdue inspections')
