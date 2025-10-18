@@ -8,9 +8,9 @@ import DocumentViewer from './DocumentViewer'
 interface Vehicle {
   id: string
   registration: string
-  make: string
-  model: string
-  year: number
+  make: string | null
+  model: string | null
+  year: number | null
 }
 
 interface VehicleDocument {
@@ -298,12 +298,44 @@ export default function VehicleDocumentsModal({
 
   const downloadDocument = async (document: VehicleDocument) => {
     try {
-      const { data, error } = await supabase.storage
-        .from('vehicle-documents')
-        .download(document.supabase_path)
+      // Try both possible buckets for download
+      let data: Blob | null = null
+      let error: any = null
 
-      if (error) {
-        throw error
+      // First try the vehicle-documents bucket
+      try {
+        const { data: vehicleDocsData, error: vehicleDocsError } = await supabase.storage
+          .from('vehicle-documents')
+          .download(document.supabase_path)
+
+        if (!vehicleDocsError && vehicleDocsData) {
+          data = vehicleDocsData
+        } else {
+          error = vehicleDocsError
+        }
+      } catch (e) {
+        error = e
+      }
+
+      // If that fails, try the inspections bucket
+      if (!data) {
+        try {
+          const { data: inspectionsData, error: inspectionsError } = await supabase.storage
+            .from('inspections')
+            .download(document.supabase_path)
+
+          if (!inspectionsError && inspectionsData) {
+            data = inspectionsData
+          } else {
+            error = inspectionsError
+          }
+        } catch (e) {
+          error = e
+        }
+      }
+
+      if (!data) {
+        throw error || new Error('File not found in any storage bucket')
       }
 
       const url = URL.createObjectURL(data)

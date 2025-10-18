@@ -7,9 +7,9 @@ import { getOrCreateTenantId } from '@/lib/tenant'
 interface Vehicle {
   id: string
   registration: string
-  make: string
-  model: string
-  year: number
+  make: string | null
+  model: string | null
+  year: number | null
 }
 
 interface VehicleDefect {

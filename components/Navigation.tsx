@@ -3,13 +3,37 @@
 import { useAuth } from '@/components/AuthProvider'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
+import { useState } from 'react'
 
 export default function Navigation() {
   const { userProfile, isAdmin, isDriver, isMaintenanceProvider, isSuperUser } = useAuth()
   const pathname = usePathname()
+  const router = useRouter()
+  const [isSigningOut, setIsSigningOut] = useState(false)
 
   if (!userProfile) return null
+
+  const handleSignOut = async () => {
+    try {
+      setIsSigningOut(true)
+      const { error } = await supabase.auth.signOut()
+      
+      if (error) {
+        console.error('Sign out error:', error)
+        alert('Failed to sign out. Please try again.')
+        return
+      }
+      
+      // Redirect to home page after successful sign out
+      router.push('/')
+    } catch (error) {
+      console.error('Sign out error:', error)
+      alert('Failed to sign out. Please try again.')
+    } finally {
+      setIsSigningOut(false)
+    }
+  }
 
   const getNavItems = () => {
     if (isAdmin || isSuperUser) {
@@ -94,14 +118,13 @@ export default function Navigation() {
                   {userProfile.role.replace('_', ' ').toUpperCase()}
                 </span>
                 <button
-                  onClick={async () => {
-                    if (supabase) {
-                      await supabase.auth.signOut()
-                    }
-                  }}
-                  className="text-sm text-gray-500 hover:text-gray-700"
+                  onClick={handleSignOut}
+                  disabled={isSigningOut}
+                  className={`text-sm text-gray-500 hover:text-gray-700 transition-colors ${
+                    isSigningOut ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
                 >
-                  Sign Out
+                  {isSigningOut ? 'Signing Out...' : 'Sign Out'}
                 </button>
               </div>
             </div>

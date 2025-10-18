@@ -1,7 +1,7 @@
 import './globals.css'
 import { Inter } from 'next/font/google'
 import { AuthProvider } from '@/components/AuthProvider'
-import Navigation from '@/components/Navigation'
+import ConditionalNavigation from '@/components/ConditionalNavigation'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -20,7 +20,7 @@ export default function RootLayout({
       <body className={inter.className}>
         <AuthProvider>
           <div className="min-h-screen bg-gray-50">
-            <Navigation />
+            <ConditionalNavigation />
             {children}
           </div>
         </AuthProvider>

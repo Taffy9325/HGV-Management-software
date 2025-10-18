@@ -4,6 +4,9 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '@/components/AuthProvider'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import { supabase, Tables } from '@/lib/supabase'
+import DVLACheckModal from '@/components/DVLACheckModal'
+import VehicleDocumentsModal from '@/components/VehicleDocumentsModal'
+import VehicleDefectsModal from '@/components/VehicleDefectsModal'
 
 interface VehicleWithType extends Tables<'vehicles'> {
   vehicle_types?: Tables<'vehicle_types'> | null
@@ -21,6 +24,11 @@ export default function AdminVehicles() {
   const [loading, setLoading] = useState(true)
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [editingVehicle, setEditingVehicle] = useState<VehicleWithType | null>(null)
+  const [showDVLAModal, setShowDVLAModal] = useState(false)
+  const [showDocumentsModal, setShowDocumentsModal] = useState(false)
+  const [selectedVehicleForDocuments, setSelectedVehicleForDocuments] = useState<VehicleWithType | null>(null)
+  const [showDefectsModal, setShowDefectsModal] = useState(false)
+  const [selectedVehicleForDefects, setSelectedVehicleForDefects] = useState<VehicleWithType | null>(null)
 
   // Form state
   const [formData, setFormData] = useState({
@@ -68,7 +76,7 @@ export default function AdminVehicles() {
             depots (*)
           )
         `)
-        .order('created_at', { ascending: false })
+        .order('registration', { ascending: true })
 
       // If not super user, filter by tenant
       if (!isSuperUser && tenantId) {
@@ -361,18 +369,27 @@ export default function AdminVehicles() {
   return (
     <ProtectedRoute allowedRoles={['admin', 'super_user']}>
       <div className="min-h-screen bg-gray-50 py-8">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-gray-900">Vehicle Management</h1>
             <p className="mt-2 text-gray-600">Manage your fleet vehicles</p>
           </div>
 
-          <div className="mb-6">
+          <div className="mb-6 flex gap-3">
             <button
               onClick={() => setShowCreateForm(true)}
               className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium"
             >
               Add New Vehicle
+            </button>
+            <button
+              onClick={() => setShowDVLAModal(true)}
+              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium flex items-center"
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              DVLA Check
             </button>
           </div>
 
@@ -384,7 +401,8 @@ export default function AdminVehicles() {
                 <p className="text-sm text-gray-500 mt-2">No vehicles found. Click "Add New Vehicle" to create one.</p>
               )}
             </div>
-            <table className="min-w-full divide-y divide-gray-200">
+            <div className="overflow-x-auto">
+              <table className="min-w-[1400px] divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -411,7 +429,7 @@ export default function AdminVehicles() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Tacho Expiry
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky right-0 bg-gray-50 z-10">
                     Actions
                   </th>
                 </tr>
@@ -498,7 +516,25 @@ export default function AdminVehicles() {
                         <span className="text-gray-400">Not set</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2 sticky right-0 bg-white z-10">
+                      <button
+                        onClick={() => {
+                          setSelectedVehicleForDocuments(vehicle)
+                          setShowDocumentsModal(true)
+                        }}
+                        className="text-green-600 hover:text-green-900 px-3 py-1 border border-green-300 rounded hover:bg-green-50"
+                      >
+                        Documents
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSelectedVehicleForDefects(vehicle)
+                          setShowDefectsModal(true)
+                        }}
+                        className="text-orange-600 hover:text-orange-900 px-3 py-1 border border-orange-300 rounded hover:bg-orange-50"
+                      >
+                        Defects
+                      </button>
                       <button
                         onClick={() => startEdit(vehicle)}
                         className="text-blue-600 hover:text-blue-900 px-3 py-1 border border-blue-300 rounded hover:bg-blue-50"
@@ -741,8 +777,63 @@ export default function AdminVehicles() {
               </div>
             </div>
           )}
+
+          {/* DVLA Check Modal */}
+          <DVLACheckModal
+            isOpen={showDVLAModal}
+            onClose={() => setShowDVLAModal(false)}
+            onVehicleFound={(vehicleData) => {
+              // Pre-fill the create vehicle form with DVLA data
+              setFormData({
+                registration: vehicleData.registrationNumber || '',
+                make: vehicleData.make || '',
+                model: vehicleData.model || '',
+                year: vehicleData.yearOfManufacture?.toString() || '',
+                vehicle_type_id: '',
+                depot_id: '',
+                fuel_type: vehicleData.fuelType?.toLowerCase() || 'diesel',
+                status: 'available',
+                dimensions: {
+                  length: '',
+                  width: '',
+                  height: '',
+                  weight: vehicleData.revenueWeight?.toString() || ''
+                },
+                adr_classifications: [],
+                tax_due_date: vehicleData.taxDueDate || '',
+                mot_due_date: vehicleData.motExpiryDate || '',
+                tacho_expiry_date: ''
+              })
+              setShowCreateForm(true)
+            }}
+          />
+
+          {/* Vehicle Documents Modal */}
+          {showDocumentsModal && selectedVehicleForDocuments && (
+            <VehicleDocumentsModal
+              isOpen={showDocumentsModal}
+              onClose={() => {
+                setShowDocumentsModal(false)
+                setSelectedVehicleForDocuments(null)
+              }}
+              vehicle={selectedVehicleForDocuments}
+            />
+          )}
+
+          {/* Vehicle Defects Modal */}
+          {showDefectsModal && selectedVehicleForDefects && (
+            <VehicleDefectsModal
+              isOpen={showDefectsModal}
+              onClose={() => {
+                setShowDefectsModal(false)
+                setSelectedVehicleForDefects(null)
+              }}
+              vehicle={selectedVehicleForDefects}
+            />
+          )}
         </div>
       </div>
+    </div>
     </ProtectedRoute>
   )
 }

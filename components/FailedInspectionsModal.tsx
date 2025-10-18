@@ -12,7 +12,7 @@ interface Vehicle {
   year: number
 }
 
-interface CompletedInspection {
+interface FailedInspection {
   id: string
   vehicle_id: string
   inspection_type: 'safety_inspection' | 'tacho_calibration'
@@ -27,41 +27,41 @@ interface CompletedInspection {
   vehicle?: Vehicle
 }
 
-interface CompletedInspectionsModalProps {
+interface FailedInspectionsModalProps {
   isOpen: boolean
   onClose: () => void
   tenantId: string
 }
 
-export default function CompletedInspectionsModal({
+export default function FailedInspectionsModal({
   isOpen,
   onClose,
   tenantId
-}: CompletedInspectionsModalProps) {
-  const [inspections, setInspections] = useState<CompletedInspection[]>([])
+}: FailedInspectionsModalProps) {
+  const [inspections, setInspections] = useState<FailedInspection[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [editingInspection, setEditingInspection] = useState<CompletedInspection | null>(null)
+  const [editingInspection, setEditingInspection] = useState<FailedInspection | null>(null)
   const [showEditModal, setShowEditModal] = useState(false)
   const [showDetailsModal, setShowDetailsModal] = useState(false)
-  const [selectedInspection, setSelectedInspection] = useState<CompletedInspection | null>(null)
+  const [selectedInspection, setSelectedInspection] = useState<FailedInspection | null>(null)
   const [editFormData, setEditFormData] = useState({
     completion_date: '',
     inspector_name: '',
     inspector_certificate_number: '',
     mileage: '',
     notes: '',
-    inspection_passed: true,
+    inspection_passed: false,
     next_inspection_due: ''
   })
 
   useEffect(() => {
     if (isOpen && tenantId) {
-      fetchCompletedInspections()
+      fetchFailedInspections()
     }
   }, [isOpen, tenantId])
 
-  const fetchCompletedInspections = async () => {
+  const fetchFailedInspections = async () => {
     try {
       setLoading(true)
       setError(null)
@@ -89,7 +89,7 @@ export default function CompletedInspectionsModal({
           )
         `)
         .eq('tenant_id', tenantId)
-        .eq('inspection_passed', true)
+        .eq('inspection_passed', false)
         .order('completion_date', { ascending: false })
 
       if (error) {
@@ -103,8 +103,8 @@ export default function CompletedInspectionsModal({
 
       setInspections(formattedInspections)
     } catch (err: any) {
-      console.error('Error fetching completed inspections:', err)
-      setError(err.message || 'Failed to load completed inspections')
+      console.error('Error fetching failed inspections:', err)
+      setError(err.message || 'Failed to load failed inspections')
     } finally {
       setLoading(false)
     }
@@ -118,7 +118,7 @@ export default function CompletedInspectionsModal({
     })
   }
 
-  const handleEditInspection = (inspection: CompletedInspection) => {
+  const handleEditInspection = (inspection: FailedInspection) => {
     setEditingInspection(inspection)
     setEditFormData({
       completion_date: inspection.completion_date,
@@ -132,7 +132,7 @@ export default function CompletedInspectionsModal({
     setShowEditModal(true)
   }
 
-  const handleViewDetails = (inspection: CompletedInspection) => {
+  const handleViewDetails = (inspection: FailedInspection) => {
     setSelectedInspection(inspection)
     setShowDetailsModal(true)
   }
@@ -163,7 +163,7 @@ export default function CompletedInspectionsModal({
       }
 
       // Refresh the inspections list
-      await fetchCompletedInspections()
+      await fetchFailedInspections()
       setShowEditModal(false)
       setEditingInspection(null)
     } catch (err: any) {
@@ -172,8 +172,8 @@ export default function CompletedInspectionsModal({
     }
   }
 
-  const handleDeleteInspection = async (inspection: CompletedInspection) => {
-    if (!confirm(`Are you sure you want to delete this inspection for ${inspection.vehicle?.registration}?`)) {
+  const handleDeleteInspection = async (inspection: FailedInspection) => {
+    if (!confirm(`Are you sure you want to delete this failed inspection for ${inspection.vehicle?.registration}?`)) {
       return
     }
 
@@ -188,14 +188,14 @@ export default function CompletedInspectionsModal({
       }
 
       // Refresh the inspections list
-      await fetchCompletedInspections()
+      await fetchFailedInspections()
     } catch (err: any) {
       console.error('Error deleting inspection:', err)
       alert('Failed to delete inspection: ' + err.message)
     }
   }
 
-  const generateInspectionReport = async (inspection: CompletedInspection) => {
+  const generateInspectionReport = async (inspection: FailedInspection) => {
     try {
       // Fetch inspection documents
       const { data: documents } = await supabase
@@ -208,7 +208,7 @@ export default function CompletedInspectionsModal({
         <!DOCTYPE html>
         <html>
         <head>
-          <title>Inspection Report - ${inspection.vehicle?.registration}</title>
+          <title>Failed Inspection Report - ${inspection.vehicle?.registration}</title>
           <style>
             body { font-family: Arial, sans-serif; margin: 20px; }
             .header { border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
@@ -217,14 +217,13 @@ export default function CompletedInspectionsModal({
             .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
             .info-item { margin-bottom: 10px; }
             .label { font-weight: bold; }
-            .status-passed { color: green; font-weight: bold; }
             .status-failed { color: red; font-weight: bold; }
             @media print { body { margin: 0; } }
           </style>
         </head>
         <body>
           <div class="header">
-            <h1>Vehicle Inspection Report</h1>
+            <h1>Failed Inspection Report</h1>
             <p><strong>Generated:</strong> ${new Date().toLocaleDateString('en-GB')}</p>
           </div>
           
@@ -257,12 +256,10 @@ export default function CompletedInspectionsModal({
               </div>
               <div class="info-item">
                 <span class="label">Result:</span> 
-                <span class="${inspection.inspection_passed ? 'status-passed' : 'status-failed'}">
-                  ${inspection.inspection_passed ? 'PASSED' : 'FAILED'}
-                </span>
+                <span class="status-failed">FAILED</span>
               </div>
               <div class="info-item">
-                <span class="label">Next Due:</span> ${inspection.next_due_date ? formatDate(inspection.next_due_date) : 'N/A'}
+                <span class="label">Next Due:</span> ${inspection.next_inspection_due ? formatDate(inspection.next_inspection_due) : 'N/A'}
               </div>
             </div>
           </div>
@@ -310,9 +307,9 @@ export default function CompletedInspectionsModal({
         <div className="p-6 border-b border-gray-200">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-xl font-semibold text-gray-900">Completed Inspections</h2>
+              <h2 className="text-xl font-semibold text-gray-900">Failed Inspections</h2>
               <p className="text-sm text-gray-600 mt-1">
-                All completed inspections across the fleet
+                All failed inspections across the fleet
               </p>
             </div>
             <button
@@ -329,8 +326,8 @@ export default function CompletedInspectionsModal({
         <div className="p-6">
           {loading ? (
             <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-              <span className="ml-2 text-gray-600">Loading completed inspections...</span>
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600"></div>
+              <span className="ml-2 text-gray-600">Loading failed inspections...</span>
             </div>
           ) : error ? (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -349,22 +346,18 @@ export default function CompletedInspectionsModal({
               <svg className="w-12 h-12 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <p className="text-gray-500">No completed inspections found</p>
-              <p className="text-sm text-gray-400 mt-1">Complete inspections to see them here</p>
+              <p className="text-gray-500">No failed inspections found</p>
+              <p className="text-sm text-gray-400 mt-1">All inspections are passing</p>
             </div>
           ) : (
             <div className="space-y-4">
               {inspections.map((inspection) => (
-                <div key={inspection.id} className="bg-white border border-gray-200 rounded-lg p-4">
+                <div key={inspection.id} className="bg-white border border-red-200 rounded-lg p-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-4">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                        inspection.inspection_passed ? 'bg-green-100' : 'bg-red-100'
-                      }`}>
-                        <svg className={`w-5 h-5 ${
-                          inspection.inspection_passed ? 'text-green-600' : 'text-red-600'
-                        }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-red-100">
+                        <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                         </svg>
                       </div>
                       <div>
@@ -379,13 +372,11 @@ export default function CompletedInspectionsModal({
                           }`}>
                             {inspection.inspection_type === 'safety_inspection' ? 'Safety Inspection' : 'Tacho Calibration'}
                           </span>
-                          <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                            inspection.inspection_passed ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                          }`}>
-                            {inspection.inspection_passed ? 'PASSED' : 'FAILED'}
+                          <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-800">
+                            FAILED
                           </span>
                           <span className="text-xs text-gray-500">
-                            Completed {formatDate(inspection.completion_date)}
+                            Failed {formatDate(inspection.completion_date)}
                           </span>
                         </div>
                         {inspection.mileage && (
@@ -393,9 +384,9 @@ export default function CompletedInspectionsModal({
                             Mileage: {inspection.mileage.toLocaleString()}
                           </p>
                         )}
-                        {inspection.next_due_date && (
+                        {inspection.next_inspection_due && (
                           <p className="text-xs text-gray-500 mt-1">
-                            Next due: {formatDate(inspection.next_due_date)}
+                            Next due: {formatDate(inspection.next_inspection_due)}
                           </p>
                         )}
                         {inspection.notes && (
@@ -459,7 +450,7 @@ export default function CompletedInspectionsModal({
             <div className="p-6 border-b">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900">
-                  Edit Inspection - {editingInspection.vehicle?.registration}
+                  Edit Failed Inspection - {editingInspection.vehicle?.registration}
                 </h3>
                 <button
                   onClick={() => {

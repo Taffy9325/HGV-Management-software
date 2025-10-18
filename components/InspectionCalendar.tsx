@@ -114,6 +114,7 @@ export default function InspectionCalendar({ tenantId, onEventClick, onDateClick
         .select('id, registration, make, model, year, tax_due_date, mot_due_date')
         .eq('tenant_id', tenantId)
         .or('tax_due_date.not.is.null,mot_due_date.not.is.null')
+        .order('registration')
 
       if (schedulesError) {
         console.error('Error fetching inspection data:', schedulesError)

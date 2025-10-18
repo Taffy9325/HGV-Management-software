@@ -94,6 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Skip auth if Supabase is not configured
     if (!supabase) {
+      console.warn('Supabase client is not configured. Authentication will not work.')
       setLoading(false)
       return
     }

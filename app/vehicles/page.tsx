@@ -7,6 +7,7 @@ import { getOrCreateTenantId } from '@/lib/tenant'
 import { User } from '@supabase/supabase-js'
 import VehicleDocumentsModal from '@/components/VehicleDocumentsModal'
 import VehicleDefectsModal from '@/components/VehicleDefectsModal'
+import DVLACheckModal from '@/components/DVLACheckModal'
 
 interface Vehicle {
   id: string
@@ -38,10 +39,15 @@ export default function VehiclesPage() {
   const [selectedVehicleForDocuments, setSelectedVehicleForDocuments] = useState<Vehicle | null>(null)
   const [showDefectsModal, setShowDefectsModal] = useState(false)
   const [selectedVehicleForDefects, setSelectedVehicleForDefects] = useState<Vehicle | null>(null)
+  const [showDVLAModal, setShowDVLAModal] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
     const getUser = async () => {
+      if (!supabase) return
+      
+      if (!supabase) return
+      
       const { data: { session } } = await supabase.auth.getSession()
 
       if (!session) {
@@ -54,6 +60,8 @@ export default function VehiclesPage() {
     }
 
     getUser()
+
+    if (!supabase) return
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT' || !session) {
@@ -74,6 +82,8 @@ export default function VehiclesPage() {
       setLoading(true)
       setError(null)
 
+      if (!supabase) return
+      
       const { data: { session } } = await supabase.auth.getSession()
       if (!session?.user) return
 
@@ -91,7 +101,7 @@ export default function VehiclesPage() {
         .from('vehicles')
         .select('*')
         .eq('tenant_id', tenantId)
-        .order('created_at', { ascending: false })
+        .order('registration', { ascending: true })
 
       if (error) {
         console.error('Error fetching vehicles:', error)
@@ -146,10 +156,6 @@ export default function VehiclesPage() {
     }
   }
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut()
-    router.push('/')
-  }
 
   if (loading) {
     return (
@@ -206,20 +212,13 @@ export default function VehiclesPage() {
                   </svg>
                 </div>
               </div>
-
-              {/* Logout */}
-              <button onClick={handleSignOut} className="p-2 text-gray-400 hover:text-gray-600">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-              </button>
             </div>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Page Header */}
         <div className="mb-8">
           <div className="flex justify-between items-center">
@@ -227,6 +226,7 @@ export default function VehiclesPage() {
               <h1 className="text-3xl font-bold text-gray-900">Vehicle Management</h1>
               <p className="text-gray-600 mt-2">Manage your fleet vehicles</p>
             </div>
+          <div className="flex items-center space-x-3">
             <button
               onClick={() => setShowAddForm(true)}
               className="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
@@ -236,6 +236,16 @@ export default function VehiclesPage() {
               </svg>
               Add Vehicle
             </button>
+            <button
+              onClick={() => setShowDVLAModal(true)}
+              className="inline-flex items-center px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors"
+            >
+              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              DVLA Check
+            </button>
+          </div>
           </div>
         </div>
 
@@ -276,7 +286,7 @@ export default function VehiclesPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
+              <table className="min-w-[1200px] divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vehicle</th>
@@ -287,7 +297,7 @@ export default function VehiclesPage() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tax Due</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">MOT Due</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tacho Expiry</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky right-0 bg-gray-50 z-10">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -359,7 +369,7 @@ export default function VehiclesPage() {
                           <span className="text-gray-400">Not set</span>
                         )}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium sticky right-0 bg-white z-10">
                         <div className="flex space-x-2">
                           <button
                             onClick={() => {
@@ -448,6 +458,17 @@ export default function VehiclesPage() {
           vehicle={selectedVehicleForDefects}
         />
       )}
+
+      {/* DVLA Check Modal */}
+      <DVLACheckModal
+        isOpen={showDVLAModal}
+        onClose={() => setShowDVLAModal(false)}
+        onVehicleFound={(vehicleData) => {
+          // Pre-fill the add vehicle form with DVLA data
+          setShowAddForm(true)
+          // You could also set form data here if needed
+        }}
+      />
     </div>
   )
 }
@@ -490,6 +511,8 @@ function AddVehicleModal({ onClose, onSuccess }: { onClose: () => void; onSucces
 
   const fetchVehicleTypes = async () => {
     try {
+      if (!supabase) return
+      
       const { data: { session } } = await supabase.auth.getSession()
       if (!session?.user) return
 
@@ -526,6 +549,12 @@ function AddVehicleModal({ onClose, onSuccess }: { onClose: () => void; onSucces
     try {
       // Test Supabase connection first
       console.log('Testing Supabase connection...')
+      if (!supabase) {
+        console.error('Supabase client is not available')
+        alert('Database connection is not available')
+        return
+      }
+      
       const { data: { session }, error: sessionError } = await supabase.auth.getSession()
       
       if (sessionError) {
@@ -641,7 +670,7 @@ function AddVehicleModal({ onClose, onSuccess }: { onClose: () => void; onSucces
             depot_id: formData.depot_id,
             vehicle_id: vehicleDataResult.id,
             assigned_at: new Date().toISOString(),
-            assigned_by: (await supabase.auth.getSession()).data.session?.user?.id
+            assigned_by: supabase ? (await supabase.auth.getSession()).data.session?.user?.id : null
           })
 
         if (depotError) {
@@ -992,6 +1021,8 @@ function AddVehicleModal({ onClose, onSuccess }: { onClose: () => void; onSucces
 // Fetch depots function for AddVehicleModal
 const fetchDepotsForModal = async () => {
   try {
+    if (!supabase) return []
+    
     const { data: { session } } = await supabase.auth.getSession()
     if (!session?.user) return []
 
@@ -1022,6 +1053,8 @@ const fetchDepotsForModal = async () => {
 
 const fetchCurrentDepotForEditModal = async (vehicleId: string) => {
   try {
+    if (!supabase) return null
+    
     const { data, error } = await supabase
       .from('depot_vehicles')
       .select('depot_id')
@@ -1083,6 +1116,8 @@ function EditVehicleModal({ vehicle, onClose, onSuccess }: { vehicle: Vehicle; o
 
   const fetchVehicleTypes = async () => {
     try {
+      if (!supabase) return
+      
       const { data: { session } } = await supabase.auth.getSession()
       if (!session?.user) return
 
@@ -1171,7 +1206,7 @@ function EditVehicleModal({ vehicle, onClose, onSuccess }: { vehicle: Vehicle; o
             depot_id: formData.depot_id,
             vehicle_id: vehicle.id,
             assigned_at: new Date().toISOString(),
-            assigned_by: (await supabase.auth.getSession()).data.session?.user?.id
+            assigned_by: supabase ? (await supabase.auth.getSession()).data.session?.user?.id : null
           })
 
         if (depotError) {

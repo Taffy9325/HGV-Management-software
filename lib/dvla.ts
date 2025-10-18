@@ -3,7 +3,7 @@ import { DVSAWalkaround, DefectReport, SafetyInspection } from './schemas'
 
 // DVLA API Configuration
 const DVLA_API_BASE_URL = 'https://driver-vehicle-licensing.api.gov.uk'
-const DVLA_API_KEY = process.env.DVLA_API_KEY
+const DVLA_API_KEY = process.env.DVLA_VEHICLE_API_KEY || process.env.DVLA_API_KEY
 
 export interface DVLALicenceResponse {
   licenceNumber: string
@@ -58,6 +58,39 @@ export interface DVLATaxResponse {
   euroStatus: string
 }
 
+// Combined response interface for the actual DVLA API
+export interface DVLAResponse {
+  registrationNumber: string
+  make: string
+  model?: string
+  firstUsedDate?: string
+  fuelType: string
+  motTestExpiryDate?: string
+  motTestNumber?: string
+  rfrAndComments?: {
+    text: string
+    type: string
+  }[]
+  taxStatus: string
+  taxDueDate: string
+  artEndDate?: string
+  motStatus: string
+  motExpiryDate: string
+  yearOfManufacture: number
+  co2Emissions: number
+  markedForExport: boolean
+  colour: string
+  typeApproval: string
+  wheelplan: string
+  revenueWeight?: number
+  realDrivingEmissions?: string
+  dateOfFirstRegistration?: string
+  euroStatus?: string
+  engineCapacity?: number
+  dateOfLastV5CIssued?: string
+  monthOfFirstRegistration?: string
+}
+
 /**
  * Check driver licence status via DVLA API
  */
@@ -91,45 +124,73 @@ export async function checkDriverLicence(
 }
 
 /**
- * Check vehicle MOT status via DVLA API
+ * Check vehicle information via DVLA API (includes MOT and tax data)
  */
-export async function checkMOTStatus(registration: string): Promise<DVLAMOTResponse> {
+export async function checkVehicleInfo(registration: string): Promise<DVLAResponse> {
   if (!DVLA_API_KEY) {
     throw new Error('DVLA API key not configured')
   }
 
-  const response = await fetch(`${DVLA_API_BASE_URL}/vehicle-enquiry/v1/vehicles/${registration}`, {
+  const response = await fetch(`${DVLA_API_BASE_URL}/vehicle-enquiry/v1/vehicles`, {
+    method: 'POST',
     headers: {
-      'x-api-key': DVLA_API_KEY
-    }
+      'x-api-key': DVLA_API_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      registrationNumber: registration
+    })
   })
 
   if (!response.ok) {
-    throw new Error(`DVLA API error: ${response.status} ${response.statusText}`)
+    const errorText = await response.text()
+    throw new Error(`DVLA API error: ${response.status} ${response.statusText} - ${errorText}`)
   }
 
   return response.json()
 }
 
 /**
+ * Check vehicle MOT status via DVLA API
+ */
+export async function checkMOTStatus(registration: string): Promise<DVLAMOTResponse> {
+  const data = await checkVehicleInfo(registration)
+  return {
+    registrationNumber: data.registrationNumber,
+    make: data.make,
+    model: data.model,
+    firstUsedDate: data.firstUsedDate,
+    fuelType: data.fuelType,
+    motTestExpiryDate: data.motTestExpiryDate,
+    motTestNumber: data.motTestNumber,
+    rfrAndComments: data.rfrAndComments
+  }
+}
+
+/**
  * Check vehicle tax status via DVLA API
  */
 export async function checkTaxStatus(registration: string): Promise<DVLATaxResponse> {
-  if (!DVLA_API_KEY) {
-    throw new Error('DVLA API key not configured')
+  const data = await checkVehicleInfo(registration)
+  return {
+    registrationNumber: data.registrationNumber,
+    taxStatus: data.taxStatus,
+    taxDueDate: data.taxDueDate,
+    artEndDate: data.artEndDate,
+    motStatus: data.motStatus,
+    motExpiryDate: data.motExpiryDate,
+    yearOfManufacture: data.yearOfManufacture,
+    co2Emissions: data.co2Emissions,
+    fuelType: data.fuelType,
+    markedForExport: data.markedForExport,
+    colour: data.colour,
+    typeApproval: data.typeApproval,
+    wheelplan: data.wheelplan,
+    revenueWeight: data.revenueWeight,
+    realDrivingEmissions: data.realDrivingEmissions,
+    dateOfFirstRegistration: data.dateOfFirstRegistration,
+    euroStatus: data.euroStatus
   }
-
-  const response = await fetch(`${DVLA_API_BASE_URL}/vehicle-enquiry/v1/vehicles/${registration}`, {
-    headers: {
-      'x-api-key': DVLA_API_KEY
-    }
-  })
-
-  if (!response.ok) {
-    throw new Error(`DVLA API error: ${response.status} ${response.statusText}`)
-  }
-
-  return response.json()
 }
 
 /**

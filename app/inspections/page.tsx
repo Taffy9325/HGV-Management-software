@@ -14,6 +14,7 @@ import BrakeTestUploadForm from '@/components/BrakeTestUploadForm'
 import TachoCalibrationUploadForm from '@/components/TachoCalibrationUploadForm'
 import ScheduledInspectionsModal from '@/components/ScheduledInspectionsModal'
 import CompletedInspectionsModal from '@/components/CompletedInspectionsModal'
+import FailedInspectionsModal from '@/components/FailedInspectionsModal'
 import ThisWeekInspectionsModal from '@/components/ThisWeekInspectionsModal'
 import TotalDefectsModal from '@/components/TotalDefectsModal'
 import { maintainRecurringSchedules, createRecurringSchedules } from '@/lib/scheduling'
@@ -34,6 +35,21 @@ interface SafetyInspection {
   inspection_passed: boolean
   next_inspection_due: string
   inspection_date: string
+  vehicle?: Vehicle
+}
+
+interface CompletedInspection {
+  id: string
+  vehicle_id: string
+  inspection_type: 'safety_inspection' | 'tacho_calibration'
+  completion_date: string
+  completed_by?: string
+  inspector_name?: string
+  inspector_certificate_number?: string
+  mileage?: number
+  notes?: string
+  inspection_passed?: boolean
+  next_inspection_due?: string
   vehicle?: Vehicle
 }
 
@@ -104,6 +120,7 @@ export default function InspectionsPage() {
   const [depots, setDepots] = useState<Depot[]>([])
   const [maintenanceProviders, setMaintenanceProviders] = useState<MaintenanceProvider[]>([])
   const [completedInspections, setCompletedInspections] = useState<any[]>([])
+  const [failedInspections, setFailedInspections] = useState<any[]>([])
   const [stats, setStats] = useState<InspectionStats>({
     totalInspections: 0,
     upcomingInspections: 0,
@@ -140,11 +157,14 @@ export default function InspectionsPage() {
   const [showTachoCalibrationModal, setShowTachoCalibrationModal] = useState(false)
   const [showScheduledModal, setShowScheduledModal] = useState(false)
   const [showCompletedModal, setShowCompletedModal] = useState(false)
+  const [showFailedModal, setShowFailedModal] = useState(false)
   const [showThisWeekModal, setShowThisWeekModal] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
     const getUser = async () => {
+      if (!supabase) return
+      
       const { data: { session } } = await supabase.auth.getSession()
 
       if (!session) {
@@ -157,6 +177,8 @@ export default function InspectionsPage() {
     }
 
     getUser()
+
+    if (!supabase) return
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT' || !session) {
@@ -177,6 +199,8 @@ export default function InspectionsPage() {
       setLoading(true)
       setError(null)
 
+      if (!supabase) return
+      
       const { data: { session } } = await supabase.auth.getSession()
       if (!session?.user) return
 
@@ -189,7 +213,7 @@ export default function InspectionsPage() {
       setTenantId(tenantIdResult)
 
       // Fetch vehicles
-      const { data: vehiclesData, error: vehiclesError } = await supabase
+      const { data: vehiclesData, error: vehiclesError } = await supabase!
         .from('vehicles')
         .select('id, registration, make, model, year')
         .eq('tenant_id', tenantIdResult)
@@ -203,7 +227,7 @@ export default function InspectionsPage() {
       }
 
       // Fetch maintenance providers
-      const { data: providersData, error: providersError } = await supabase
+      const { data: providersData, error: providersError } = await supabase!
         .from('maintenance_providers')
         .select('*')
         .eq('tenant_id', tenantIdResult)
@@ -218,7 +242,7 @@ export default function InspectionsPage() {
       }
 
       // Fetch depots
-      const { data: depotsData, error: depotsError } = await supabase
+      const { data: depotsData, error: depotsError } = await supabase!
         .from('depots')
         .select('id, name, address')
         .eq('tenant_id', tenantIdResult)
@@ -232,7 +256,7 @@ export default function InspectionsPage() {
       }
 
       // Fetch inspection schedules
-      const { data: schedulesData, error: schedulesError } = await supabase
+      const { data: schedulesData, error: schedulesError } = await supabase!
         .from('inspection_schedules')
         .select(`
           id,
@@ -247,7 +271,7 @@ export default function InspectionsPage() {
           created_at,
           updated_at,
           vehicles!inner(id, registration, make, model, year),
-          maintenance_providers(id, name, contact_person, phone)
+          maintenance_providers(id, name, contact_person, phone, is_active)
         `)
         .eq('tenant_id', tenantIdResult)
         .eq('is_active', true)
@@ -259,14 +283,14 @@ export default function InspectionsPage() {
       } else {
         const formattedSchedules = (schedulesData || []).map(schedule => ({
           ...schedule,
-          vehicle: schedule.vehicles,
-          maintenance_provider: schedule.maintenance_providers
+          vehicle: schedule.vehicles?.[0] || null,
+          maintenance_provider: schedule.maintenance_providers?.[0] || null
         }))
         setSchedules(formattedSchedules)
       }
 
       // Fetch inspections
-      const { data: inspectionsData, error: inspectionsError } = await supabase
+      const { data: inspectionsData, error: inspectionsError } = await supabase!
         .from('safety_inspections')
         .select(`
           id,
@@ -287,27 +311,30 @@ export default function InspectionsPage() {
       } else {
         const formattedInspections = (inspectionsData || []).map(inspection => ({
           ...inspection,
-          vehicle: inspection.vehicles
+          vehicle: inspection.vehicles?.[0] || null
         }))
         setInspections(formattedInspections)
       }
 
-      // Fetch completed inspections
-      const { data: completedData, error: completedError } = await supabase
+      // Fetch completed inspections (only passed inspections)
+      const { data: completedData, error: completedError } = await supabase!
         .from('inspection_completions')
         .select(`
           id,
           vehicle_id,
           inspection_type,
           completion_date,
-          inspector_id,
+          completed_by,
+          inspector_name,
+          inspector_certificate_number,
           mileage,
           notes,
           inspection_passed,
-          next_due_date,
+          next_inspection_due,
           vehicles!inner(id, registration, make, model, year)
         `)
         .eq('tenant_id', tenantIdResult)
+        .eq('inspection_passed', true)
         .order('completion_date', { ascending: false })
 
       if (completedError) {
@@ -319,6 +346,38 @@ export default function InspectionsPage() {
           vehicle: completion.vehicles
         }))
         setCompletedInspections(formattedCompleted)
+      }
+
+      // Fetch failed inspections
+      const { data: failedData, error: failedError } = await supabase!
+        .from('inspection_completions')
+        .select(`
+          id,
+          vehicle_id,
+          inspection_type,
+          completion_date,
+          completed_by,
+          inspector_name,
+          inspector_certificate_number,
+          mileage,
+          notes,
+          inspection_passed,
+          next_inspection_due,
+          vehicles!inner(id, registration, make, model, year)
+        `)
+        .eq('tenant_id', tenantIdResult)
+        .eq('inspection_passed', false)
+        .order('completion_date', { ascending: false })
+
+      if (failedError) {
+        console.error('Error fetching failed inspections:', failedError)
+        setFailedInspections([])
+      } else {
+        const formattedFailed = (failedData || []).map(completion => ({
+          ...completion,
+          vehicle: completion.vehicles
+        }))
+        setFailedInspections(formattedFailed)
       }
 
       // Fetch open defects count
@@ -336,10 +395,6 @@ export default function InspectionsPage() {
     }
   }
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut()
-    router.push('/')
-  }
 
   // Calendar handlers
   const handleCalendarRefresh = () => {
@@ -361,7 +416,7 @@ export default function InspectionsPage() {
       if (!tenantId) return
 
       // Fetch open/in-progress defects count
-      const { count: openCount, error: openError } = await supabase
+      const { count: openCount, error: openError } = await supabase!
         .from('vehicle_defects')
         .select('*', { count: 'exact', head: true })
         .eq('tenant_id', tenantId)
@@ -374,7 +429,7 @@ export default function InspectionsPage() {
       }
 
       // Fetch total defects count (only open/in-progress defects)
-      const { count: totalCount, error: totalError } = await supabase
+      const { count: totalCount, error: totalError } = await supabase!
         .from('vehicle_defects')
         .select('*', { count: 'exact', head: true })
         .eq('tenant_id', tenantId)
@@ -444,7 +499,8 @@ export default function InspectionsPage() {
       upcomingScheduled,
       overdueScheduled,
       thisWeekScheduled,
-      completedInspections: completedInspections.length
+      completedInspections: completedInspections.length, // Only passed inspections
+      failedInspections: failedInspections.length
     }
   }
 
@@ -531,14 +587,6 @@ export default function InspectionsPage() {
                   </svg>
                 </div>
               </div>
-
-              {/* Logout */}
-              <button
-                onClick={handleSignOut}
-                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Sign Out
-              </button>
             </div>
           </div>
         </div>
@@ -606,6 +654,27 @@ export default function InspectionsPage() {
               <div className="ml-4">
                 <p className="text-sm font-medium text-gray-600">Completed</p>
                 <p className="text-2xl font-semibold text-gray-900">{calculateStats().completedInspections}</p>
+                <p className="text-xs text-gray-500 mt-1">Click to view details</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Failed Inspections */}
+          <div 
+            className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow cursor-pointer"
+            onClick={() => setShowFailedModal(true)}
+          >
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
+                  <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </div>
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Failed</p>
+                <p className="text-2xl font-semibold text-gray-900">{calculateStats().failedInspections}</p>
                 <p className="text-xs text-gray-500 mt-1">Click to view details</p>
               </div>
             </div>
@@ -929,6 +998,15 @@ export default function InspectionsPage() {
           <CompletedInspectionsModal
             isOpen={showCompletedModal}
             onClose={() => setShowCompletedModal(false)}
+            tenantId={tenantId}
+          />
+        )}
+
+        {/* Failed Inspections Modal */}
+        {showFailedModal && tenantId && (
+          <FailedInspectionsModal
+            isOpen={showFailedModal}
+            onClose={() => setShowFailedModal(false)}
             tenantId={tenantId}
           />
         )}
@@ -1297,7 +1375,7 @@ function EditInspectionForm({
         is_active: formData.is_active
       }
 
-      const { error: updateError } = await supabase
+      const { error: updateError } = await supabase!
         .from('inspection_schedules')
         .update(updateData)
         .eq('id', inspection.id)
@@ -1553,7 +1631,7 @@ function AddInspectionModal({
         is_active: true
       }
 
-      const { error: insertError } = await supabase
+      const { error: insertError } = await supabase!
         .from('inspection_schedules')
         .insert(inspectionData)
 
@@ -1990,7 +2068,7 @@ function AddEditProviderModal({
 
       if (provider) {
         // Update existing provider
-        const { error: updateError } = await supabase
+        const { error: updateError } = await supabase!!
           .from('maintenance_providers')
           .update(providerData)
           .eq('id', provider.id)
@@ -2001,7 +2079,7 @@ function AddEditProviderModal({
         }
       } else {
         // Create new provider
-        const { error: insertError } = await supabase
+        const { error: insertError } = await supabase!!
           .from('maintenance_providers')
           .insert(providerData)
 

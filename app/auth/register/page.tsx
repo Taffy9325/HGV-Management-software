@@ -5,10 +5,18 @@ import { ThemeSupa } from '@supabase/auth-ui-shared'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
 export default function RegisterPage() {
   const router = useRouter()
+  const [redirectUrl, setRedirectUrl] = useState<string>('')
+
+  // Set the redirect URL dynamically
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setRedirectUrl(`${window.location.origin}/auth/callback`)
+    }
+  }, [])
 
   useEffect(() => {
     if (!supabase) return
@@ -51,7 +59,7 @@ export default function RegisterPage() {
               supabaseClient={supabase}
               appearance={{ theme: ThemeSupa }}
               providers={['google', 'github']}
-              redirectTo={`${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/auth/callback`}
+              redirectTo={redirectUrl || 'http://localhost:3001/auth/callback'}
               onlyThirdPartyProviders={false}
               view="sign_up"
             />

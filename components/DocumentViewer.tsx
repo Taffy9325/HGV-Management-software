@@ -58,15 +58,47 @@ export default function DocumentViewer({
       setLoading(true)
       setError(null)
 
-      const { data, error } = await supabase.storage
-        .from('vehicle-documents')
-        .createSignedUrl(document.supabase_path, 3600) // 1 hour expiry
+      // Try both possible buckets for signed URL
+      let signedUrl: string | null = null
+      let error: any = null
 
-      if (error) {
-        throw error
+      // First try the vehicle-documents bucket
+      try {
+        const { data, error: vehicleDocsError } = await supabase.storage
+          .from('vehicle-documents')
+          .createSignedUrl(document.supabase_path, 3600)
+
+        if (!vehicleDocsError && data) {
+          signedUrl = data.signedUrl
+        } else {
+          error = vehicleDocsError
+        }
+      } catch (e) {
+        error = e
       }
 
-      setDocumentUrl(data.signedUrl)
+      // If that fails, try the inspections bucket
+      if (!signedUrl) {
+        try {
+          const { data, error: inspectionsError } = await supabase.storage
+            .from('inspections')
+            .createSignedUrl(document.supabase_path, 3600)
+
+          if (!inspectionsError && data) {
+            signedUrl = data.signedUrl
+          } else {
+            error = inspectionsError
+          }
+        } catch (e) {
+          error = e
+        }
+      }
+
+      if (!signedUrl) {
+        throw error || new Error('File not found in any storage bucket')
+      }
+
+      setDocumentUrl(signedUrl)
     } catch (err: any) {
       console.error('Error loading document:', err)
       setError(err.message || 'Failed to load document')
@@ -79,12 +111,44 @@ export default function DocumentViewer({
     if (!document) return
 
     try {
-      const { data, error } = await supabase.storage
-        .from('vehicle-documents')
-        .download(document.supabase_path)
+      // Try both possible buckets for download
+      let data: Blob | null = null
+      let error: any = null
 
-      if (error) {
-        throw error
+      // First try the vehicle-documents bucket
+      try {
+        const { data: vehicleDocsData, error: vehicleDocsError } = await supabase.storage
+          .from('vehicle-documents')
+          .download(document.supabase_path)
+
+        if (!vehicleDocsError && vehicleDocsData) {
+          data = vehicleDocsData
+        } else {
+          error = vehicleDocsError
+        }
+      } catch (e) {
+        error = e
+      }
+
+      // If that fails, try the inspections bucket
+      if (!data) {
+        try {
+          const { data: inspectionsData, error: inspectionsError } = await supabase.storage
+            .from('inspections')
+            .download(document.supabase_path)
+
+          if (!inspectionsError && inspectionsData) {
+            data = inspectionsData
+          } else {
+            error = inspectionsError
+          }
+        } catch (e) {
+          error = e
+        }
+      }
+
+      if (!data) {
+        throw error || new Error('File not found in any storage bucket')
       }
 
       const url = URL.createObjectURL(data)
